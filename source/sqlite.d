@@ -91,8 +91,8 @@ class SQLite3
 				enforce!(db_exception)(typ == SQLITE3_TEXT,
 						"Column is not an string");
 				return to!string(sqlite3_column_text(stmt, pos));
-			} else static if(isFloat!T) {
-				enforce!(db_exception)(typ == SQLITE_REAL,
+			} else static if(isFloatingPoint!T) {
+				enforce!(db_exception)(typ == SQLITE_FLOAT,
 						"Column is not an real");
 				return sqlite3_column_double(stmt, pos);
 			} else {
