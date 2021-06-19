@@ -1,8 +1,8 @@
 import std.typecons : RefCounted, tuple, Tuple;
 import std.traits;
-import std.string : toStringz;
+import std.string;
 import std.conv : to;
-import core.stdc.string : strcmp ;
+import core.stdc.string : strcmp;
 import etc.c.sqlite3;
 import std.exception : enforce;
 
@@ -29,7 +29,7 @@ class SQLite3
 {
 	struct Statement
 	{
-		~this() { if(s) sqlite3_finalize(s); s = null; } 
+		~this() { if(s) sqlite3_finalize(s); s = null; }
 		sqlite3_stmt* s = null;
 		alias s this;
 	}
@@ -40,9 +40,9 @@ class SQLite3
 		private sqlite3* db;
 		private RefCounted!Statement stmt;
 		public int lastCode = -1;
-	
+
 		/// Construct a query from the string 'sql' into database 'db'
-		this(ARGS...)(sqlite3* db, string sql, ARGS args)			
+		this(ARGS...)(sqlite3* db, string sql, ARGS args)
 		{
 			sqlite3_stmt* s = null;
 			int rc = sqlite3_prepare_v2(db, toz(sql), -1, &s, null);
@@ -51,12 +51,12 @@ class SQLite3
 			bind(args);
 		}
 
-		private int bindArg(int pos, string arg) 
+		private int bindArg(int pos, string arg)
 		{
-			return sqlite3_bind_text(stmt, pos, arg.ptr, cast(int)arg.length, null); 
+			return sqlite3_bind_text(stmt, pos, arg.ptr, cast(int)arg.length, null);
 		}
 
-		private int bindArg(int pos, double arg) 
+		private int bindArg(int pos, double arg)
 		{
 			return sqlite3_bind_double(stmt, pos, arg);
 		}
@@ -174,7 +174,7 @@ class SQLite3
 				rc = sqlite3_errcode(db);
 			if(rc != SQLITE_OK && rc != SQLITE_ROW && rc != SQLITE_DONE) {
 				throw new db_exception(prefix ~ " (" ~ to!string(rc) ~ "): " ~ to!string(sqlite3_errmsg(db)), file, line);
-			}	
+			}
 		}
 	}
 

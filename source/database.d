@@ -5,8 +5,8 @@ import querybuilder;
 /// Setup code for tests
 mixin template TEST(string dbname)
 {
-	struct User { 
-		string name = ""; 
+	struct User {
+		string name = "";
 		int age = 0;
 	};
 
@@ -83,7 +83,7 @@ class Database : SQLite3
 		mixin TEST!("select");
 		import std.array : array;
 		import std.algorithm.iteration : fold;
-	
+
 		db.create!User();
 		db.insert(User("jonas", 55));
 		db.insert(User("oliver", 91));
@@ -92,7 +92,7 @@ class Database : SQLite3
 
 		User[] users = array(db.selectAllWhere!(User, "age > ?")(20));
 		auto total = fold!((a,b) => User("", a.age + b.age))(users);
-	
+
 		assert(total.age == 55 + 91 + 27);
 
 		assert(db.selectOneWhere!(User, "age == ?")(27).name == "maria");

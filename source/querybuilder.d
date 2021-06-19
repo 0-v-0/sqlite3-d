@@ -1,6 +1,6 @@
 import std.traits;
-import std.typecons : tuple, Tuple ;
-import std.string : join, countchars ;
+import std.typecons : tuple, Tuple;
+import std.string : join, count;
 import std.algorithm.iteration : map;
 import std.array : array;
 import utils;
@@ -116,7 +116,7 @@ struct QueryBuilder(int STATE = Empty, BINDS = Tuple!(), string[] SELECTS = [])
 
 	private mixin template VerifyParams(string what, ARGS...)
 	{
-		static assert(countchars(what, "?") == A.length, "Incorrect number parameters");
+		static assert(count(what, "?") == A.length, "Incorrect number parameters");
 	}
 
 	this(string sql, BINDS args)

@@ -9,7 +9,7 @@ TLDR
 
 ```D
 struct User {
-	@sqlname("rowid") id;
+	@sqlname("rowid") int id;
 	string name;
 	int age;
 }
