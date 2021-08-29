@@ -1,22 +1,23 @@
+module sqlite3_d.sqlite;
+
 import std.typecons : RefCounted, tuple, Tuple;
 import std.traits;
 import std.string;
 import std.conv : to;
-import core.stdc.string : strcmp;
 import etc.c.sqlite3;
 import std.exception : enforce;
+import sqlite3_d.utils;
 
-import utils;
 pragma(lib, "sqlite3");
 
 class db_exception : Exception {
 	this(string msg, string file = __FILE__, size_t line = __LINE__) { super(msg, file, line); }
 };
 
-alias toz = std.string.toStringz;
+package alias toz = toStringz;
 
 /// Setup code for tests
-mixin template TEST(string dbname)
+debug mixin template TEST(string dbname)
 {
 	SQLite3 db = () {
 		tryRemove(dbname ~ ".db");
@@ -24,7 +25,7 @@ mixin template TEST(string dbname)
 	}();
 }
 
-/// An sqlite3 database
+/// A sqlite3 database
 class SQLite3
 {
 	struct Statement
@@ -39,34 +40,46 @@ class SQLite3
 	{
 		private sqlite3* db;
 		private RefCounted!Statement stmt;
-		public int lastCode = -1;
+		int lastCode = -1;
 
 		/// Construct a query from the string 'sql' into database 'db'
 		this(ARGS...)(sqlite3* db, string sql, ARGS args)
 		{
 			sqlite3_stmt* s = null;
-			int rc = sqlite3_prepare_v2(db, toz(sql), -1, &s, null);
+			int rc = sqlite3_prepare_v2(db, sql.toz, -1, &s, null);
 			checkError("Prepare failed: ", rc);
 			stmt.s = s;
 			bind(args);
 		}
+	private:
 
-		private int bindArg(int pos, string arg)
+		int bindArg(int pos, string arg)
 		{
 			return sqlite3_bind_text(stmt, pos, arg.ptr, cast(int)arg.length, null);
 		}
 
-		private int bindArg(int pos, double arg)
+		int bindArg(int pos, double arg)
 		{
 			return sqlite3_bind_double(stmt, pos, arg);
 		}
 
-		private int bindArg(T)(int pos, T arg) if(isIntegral!T) {
+		 int bindArg(T)(int pos, T arg) if(isIntegral!T && T.sizeof <= 4) {
+			return sqlite3_bind_int(stmt, pos, arg);
+		}
+
+		int bindArg(T)(int pos, T arg) if(isIntegral!T && T.sizeof > 4) {
 			return sqlite3_bind_int64(stmt, pos, arg);
 		}
 
-		private int bindArg(int pos, void[] arg)
+		int bindArg(int pos, void[] arg)
 		{
+			// sqlite3_bind_blob64
+			return sqlite3_bind_blob(stmt, pos, arg.ptr, cast(int)arg.length, null);
+		}
+
+		int bindArg(int pos, ubyte[] arg)
+		{
+			// sqlite3_bind_blob64
 			return sqlite3_bind_blob(stmt, pos, arg.ptr, cast(int)arg.length, null);
 		}
 
@@ -80,7 +93,7 @@ class SQLite3
 			}
 		}
 
-		private T getArg(T)(int pos)
+		T getArg(T)(int pos)
 		{
 			auto typ = sqlite3_column_type(stmt, pos);
 			static if(isIntegral!T) {
@@ -104,15 +117,18 @@ class SQLite3
 			}
 		}
 
-		private void getArg(T)(int pos, ref T t)
+		void getArg(T)(int pos, ref T t)
 		{
 			t = getArg!(T)(pos);
 		}
+	public:
 
 		// Find column by name
-		private int findName(string name)
+		int findColumn(string name)
 		{
-			auto zname = toz(name);
+			import core.stdc.string : strcmp;
+
+			auto zname = name.toz;
 			for(int i=0; i<sqlite3_column_count(stmt); i++) {
 				if(strcmp(sqlite3_column_name(stmt, i), zname) == 0)
 					return i;
@@ -121,7 +137,7 @@ class SQLite3
 		}
 
 		/// Get current row (and column) as a basic type
-		public T get(T, int COL = 0)() if(!(isAggregateType!T))
+		T get(T, int COL = 0)() if(!(isAggregateType!T))
 		{
 			if(lastCode == -1)
 				step();
@@ -129,7 +145,7 @@ class SQLite3
 		}
 
 		/// Map current row to the fields of the given STRUCT
-		public T get(T, int _ = 0)() if(isAggregateType!T)
+		T get(T, int _ = 0)() if(isAggregateType!T)
 		{
 			if(lastCode == -1)
 				step();
@@ -140,13 +156,13 @@ class SQLite3
 					enum colName = ATTRS[0].name;
 				else
 					enum colName = N;
-				getArg(findName(colName), __traits(getMember, t, N));
+				getArg(findColumn(colName), __traits(getMember, t, N));
 			}
 			return t;
 		}
 
 		/// Get current row as a tuple
-		public Tuple!T get(T...)()
+		Tuple!T get(T...)()
 		{
 			Tuple!(T) t;
 			foreach(I, Ti ; T)
@@ -155,26 +171,22 @@ class SQLite3
 		}
 
 		/// Step the SQL statement; move to next row of the result set. Return `false` if there are no more rows
-		public bool step()
+		bool step()
 		{
 			lastCode = sqlite3_step(stmt);
 			checkError("Step failed", lastCode);
-			return (lastCode == SQLITE_ROW);
+			return lastCode == SQLITE_ROW;
 		}
 
 		/// Reset the statement, to step through the resulting rows again.
-		public void reset()
-		{
-			sqlite3_reset(stmt);
-		}
+		void reset() { sqlite3_reset(stmt); }
 
 		private void checkError(string prefix, int rc, string file = __FILE__, int line = __LINE__)
 		{
 			if(rc < 0)
 				rc = sqlite3_errcode(db);
-			if(rc != SQLITE_OK && rc != SQLITE_ROW && rc != SQLITE_DONE) {
+			if(rc != SQLITE_OK && rc != SQLITE_ROW && rc != SQLITE_DONE)
 				throw new db_exception(prefix ~ " (" ~ to!string(rc) ~ "): " ~ to!string(sqlite3_errmsg(db)), file, line);
-			}
 		}
 	}
 
@@ -198,8 +210,7 @@ class SQLite3
 		assert(q.get!(int,int)() == tuple(1,2));
 
 		struct Test {
-			int a;
-			int b;
+			int a, b;
 		}
 
 		auto test = q.get!Test();
@@ -224,16 +235,16 @@ class SQLite3
 	/** Create a SQLite3 from a database file. If file does not exist, the
 	  * database will be initialized as new
 	 */
-	public this(string dbFile)
+	this(string dbFile)
 	{
 		int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
-		int rc = sqlite3_open_v2(toz(dbFile), &db, flags, null);
+		int rc = sqlite3_open_v2(dbFile.toz, &db, flags, null);
 		if(rc != SQLITE_OK)
 			throw new db_exception("Could not open database");
 	}
 
 	/// Execute an sql statement directly, binding the args to it
-	public bool exec(ARGS...)(string sql, ARGS args)
+	bool exec(ARGS...)(string sql, ARGS args)
 	{
 		auto q = Query(db, sql);
 		q.bind(args);
@@ -249,7 +260,7 @@ class SQLite3
 	}
 
 	/// Return 'true' if database contains the given table
-	public bool hasTable(string table)
+	bool hasTable(string table)
 	{
 		return query(
 			"SELECT name FROM sqlite_master WHERE type='table' AND name=?",
@@ -265,10 +276,7 @@ class SQLite3
 	}
 
 	/// Return the 'rowid' produced by the last insert statement
-	public long lastRowid()
-	{
-		return sqlite3_last_insert_rowid(db);
-	}
+	long lastRowid() { return sqlite3_last_insert_rowid(db); }
 
 	///
 	unittest {
@@ -284,7 +292,7 @@ class SQLite3
 	}
 
 	/// Create query from string and args to bind
-	public Query query(ARGS...)(string sql, ARGS args)
+	Query query(ARGS...)(string sql, ARGS args)
 	{
 		auto q = Query(db, sql);
 		q.bind(args);
@@ -292,7 +300,7 @@ class SQLite3
 	}
 
 	/// Create query from QueryBuilder like class
-	public Query query(SOMEQUERY)(SOMEQUERY sq) if(hasMember!(SOMEQUERY, "sql") && hasMember!(SOMEQUERY, "binds"))
+	Query query(SOMEQUERY)(SOMEQUERY sq) if(hasMember!(SOMEQUERY, "sql") && hasMember!(SOMEQUERY, "binds"))
 	{
 		auto q = Query(db, sq.sql);
 		q.bind(sq.binds.expand);
@@ -320,4 +328,3 @@ class SQLite3
 	protected sqlite3 *db;
 	alias db this;
 }
-

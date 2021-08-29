@@ -1,7 +1,17 @@
-import std.traits;
+module sqlite3_d.utils;
+
+struct sqlname { string name; }
+struct sqlkey { string key; }
+struct sqltype { string type; }
+
+package:
+
+alias getAttr(T...) = __traits(getAttributes, T);
+alias getMember(alias I, alias N) = __traits(getMember, I, N);
+
 
 /// Try to remove 'name', return true on success
-bool tryRemove(string name) {
+debug bool tryRemove(string name) {
 	import std.file;
 	try {
 		std.file.remove(name);
@@ -11,20 +21,21 @@ bool tryRemove(string name) {
 	return true;
 }
 
-struct sqlname { string name; }
 
-static string quote(string s, string q = "'")
+static string quote(string s, string q = "'") pure nothrow 
 {
 	return q ~ s ~ q;
 }
 
-static string[] quote(string[] s, string q = "'")
+static string[] quote(string[] s, string q = "'") pure nothrow 
 {
 	string[] res;
 	foreach(t ; s)
 		res ~= q ~ t ~ q;
 	return res;
 }
+
+import std.traits;
 
 @property bool allString(STRING...)() {
 	bool ok = true;

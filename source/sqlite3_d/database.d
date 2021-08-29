@@ -1,13 +1,13 @@
-import utils : tryRemove, sqlname;
-import sqlite;
-import querybuilder;
+module sqlite3_d.database;
+
+import sqlite3_d;
 
 /// Setup code for tests
 mixin template TEST(string dbname)
 {
 	struct User {
 		string name = "";
-		int age = 0;
+		int age;
 	};
 
 	struct Message {
@@ -21,8 +21,6 @@ mixin template TEST(string dbname)
 		return new Database(dbname ~ ".db");
 	}();
 }
-
-alias db_exception = sqlite.db_exception;
 
 /// An Database with query building capabilities
 class Database : SQLite3
@@ -128,7 +126,6 @@ class Database : SQLite3
 		db.insert(user);
 		assert(db.query("select name from User where age = 45").step());
 		assert(!db.query("select age from User where name = 'xxx'").step());
-
 	};
 
 	private bool autoCreateTable = true;
@@ -149,4 +146,3 @@ unittest
 	Group gg = db.selectOneWhere!(Group, "\"Group\"=3");
 	assert(gg.Group == g.Group);
 }
-

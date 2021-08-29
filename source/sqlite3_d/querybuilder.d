@@ -1,39 +1,36 @@
-import std.traits;
-import std.typecons : tuple, Tuple;
-import std.string : join, count;
-import std.algorithm.iteration : map;
-import std.array : array;
-import utils;
+module sqlite3_d.querybuilder;
 
-struct sqlkey { string key; }
+import sqlite3_d.utils;
 
 version(unittest)
 {
-	struct User {
-		string name;
-		int age;
-	}
+	package {
+		struct User {
+			string name;
+			int age;
+		}
 
-	@sqlname("msg") struct Message {
-		@sqlname("rowid") int id;
-		string contents;
+		@sqlname("msg") struct Message {
+			@sqlname("rowid") int id;
+			string contents;
+		}
 	}
 }
 
+import std.traits;
+import std.typecons : tuple, Tuple;
+import std.string : join, count;
 
 /// Get the tablename of `STRUCT`
-static template TableName(STRUCT) {
-	enum ATTRS = __traits(getAttributes, STRUCT);
-	static if(ATTRS.length > 0 && is(typeof(ATTRS[0]) == sqlname)) {
+static template TableName(alias STRUCT) {
+	enum ATTRS = getAttr!STRUCT;
+	static if(ATTRS.length > 0 && is(typeof(ATTRS[0]) == sqlname))
 		enum TableName = ATTRS[0].name;
-	} else
+	else
 		enum TableName = STRUCT.stringof;
 };
 ///
 unittest {
-	struct User { string name; } 
-	@sqlname("msg") struct Message { }
-
 	assert(TableName!User == "User");
 	assert(TableName!Message == "msg");
 }
@@ -50,7 +47,7 @@ static template ColumnName(STRUCT, string FIELD) if(isAggregateType!STRUCT) {
 /// Return the qualifed column name of the given struct field
 static template ColumnName(alias FIELDNAME)
 {
-	enum ATTRS = __traits(getAttributes, FIELDNAME);
+	enum ATTRS = getAttr!FIELDNAME;
 	static if(ATTRS.length > 0 && is(typeof(ATTRS[0]) == sqlname))
 		enum CN = ATTRS[0].name;
 	else
@@ -60,7 +57,6 @@ static template ColumnName(alias FIELDNAME)
 }
 ///
 unittest {
-	struct User { int age; } 
 	@sqlname("msg") struct Message { @sqlname("txt") string contents; }
 	assert(ColumnName!(User, "age") == "age");
 	assert(tuple(ColumnName!(Message.contents), ColumnName!(User.age)) == tuple("'msg'.'txt'", "'User'.'age'"));
@@ -78,46 +74,48 @@ enum OR {
 struct QueryBuilder(int STATE = Empty, BINDS = Tuple!(), string[] SELECTS = [])
 {
 	BINDS args;
-	public string sql;
+	string sql;
 	alias sql this;
 
-	@property public BINDS binds() { return args; }
+	@property BINDS binds() { return args; }
 
-	private static bool checkField(string F, TABLES...)() {
-		bool ok = false;
-		foreach(TABLE ; TABLES) {
+private:
+	static bool checkField(string F, TABLES...)() pure nothrow {
+		foreach(TABLE; TABLES) {
 			enum tableName = TableName!TABLE;
-			foreach(N ; FieldNameTuple!TABLE) {
+			foreach(N; FieldNameTuple!TABLE) {
 				enum colName = ColumnName!(TABLE,N);
-				ok |= ((colName == F) || (tableName ~ "." ~ colName == F)) 
-				|| ((quote(colName) == F) || (quote(tableName) ~ "." ~ quote(colName) == F));
+				if(((colName == F) || (tableName ~ "." ~ colName == F))
+					|| ((quote(colName) == F) || (quote(tableName) ~ "." ~ quote(colName) == F)))
+					return true;
 			}
 		}
-		return ok;
+		return false;
 	}
 
-	private static bool checkFields(string[] FIELDS, TABLES...)()
+	static bool checkFields(string[] FIELDS, TABLES...)()
 	{
 		static if(FIELDS.length > 1)
 			return checkField!(FIELDS[0], TABLES) && checkFields!(FIELDS[1..$], TABLES);
 		else
 			return checkField!(FIELDS[0], TABLES);
 	}
+	template sqlType(T) if(isSomeString!T) { enum sqlType = "TEXT"; }
+	template sqlType(T) if(isFloatingPoint!T) { enum sqlType = "REAL"; }
+	template sqlType(T) if(isIntegral!T || is(T == bool)) { enum sqlType = "INT"; }
+	template sqlType(T) if(is(T == void[])) { enum sqlType = "BLOB"; }
 
-	private static string sqlType(T)() if(isSomeString!T) { return "TEXT"; }
-	private static string sqlType(T)() if(isFloatingPoint!T) { return "REAL"; }
-	private static string sqlType(T)() if(isIntegral!T) { return "INT"; }
-	private static string sqlType(T)() if(is(T == void[])) { return "BLOB"; }
-
-	private static auto make(int STATE = Empty, string[] SELECTS = [], BINDS)(string sql, BINDS binds)
+	static auto make(int STATE = Empty, string[] SELECTS = [], BINDS)(string sql, BINDS binds)
 	{
 		return QueryBuilder!(STATE, BINDS, SELECTS)(sql, binds);
 	}
 
-	private mixin template VerifyParams(string what, ARGS...)
+	mixin template VerifyParams(string what, ARGS...)
 	{
 		static assert(count(what, "?") == A.length, "Incorrect number parameters");
 	}
+
+public:
 
 	this(string sql, BINDS args)
 	{
@@ -125,35 +123,64 @@ struct QueryBuilder(int STATE = Empty, BINDS = Tuple!(), string[] SELECTS = [])
 		this.args = args;
 	}
 
-	public static auto create(STRUCT)() if(isAggregateType!STRUCT)
+	static auto create(STRUCT)() if(isAggregateType!STRUCT)
 	{
-		enum TABLE = TableName!STRUCT;
+		enum SATTRS = getAttr!STRUCT;
+		string s;
+		static foreach(A; SATTRS)
+			static if(is(typeof(A) == string) && A.length > 0) {
+				import std.uni : isWhite;
+				static if(isWhite(A[0]))
+					s ~= A;
+				else
+					s ~= " " ~ A;
+			}
 		alias FIELDS = Fields!STRUCT;
-		string[] fields;
-		string[] keys;
+		string[] fields, keys, pkeys;
 
-		foreach(I, N ; FieldNameTuple!STRUCT) {
+		foreach(I, N; FieldNameTuple!STRUCT) {
 			alias colName = ColumnName!(STRUCT, N);
-			static if(colName != "rowid")
-				fields ~= quote(colName) ~ " " ~ sqlType!(FIELDS[I]);
 			enum ATTRS = __traits(getAttributes, __traits(getMember, STRUCT, N));
-			foreach(A ; ATTRS)
+			static if(colName != "rowid") {
+				string field = quote(colName) ~ " ",
+					   type = sqlType!(FIELDS[I]),
+					   constraints;
+			}
+			foreach(A; ATTRS)
 				static if(is(typeof(A) == sqlkey)) {
 					static if(A.key == "")
-						keys ~= "PRIMARY KEY(" ~ colName ~ ")";
+						pkeys ~= colName;
 					else
 						keys ~= "FOREIGN KEY(" ~ colName ~ ") REFERENCES " ~ A.key;
+				} else static if(colName != "rowid" && is(typeof(A) == sqltype)) {
+					type = A.type;
+				} else static if(is(typeof(A) == string) && A.length > 0) {
+					import std.uni : isWhite;
+					static if(isWhite(A[0]))
+						constraints ~= A;
+					else
+						constraints ~= " " ~ A;
 				}
+			static if(colName != "rowid") {
+				import std.conv : to;
+
+				field ~= type ~ constraints;
+				enum MEMBER = __traits(getMember, STRUCT.init, N);
+				if(MEMBER != FIELDS[I].init)
+					field ~= " default " ~ quote(to!string(MEMBER));
+				fields ~= field;
+			}
 		}
+		if(pkeys)
+			keys ~= "PRIMARY KEY(" ~ pkeys.join(",") ~ ")";
 
-		fields ~= keys;
-
-		return make!(Create)("CREATE TABLE IF NOT EXISTS " ~ quote(TABLE) ~ "(" ~ join(fields, ", ") ~ ")", tuple());
+		return make!(Create)("CREATE TABLE IF NOT EXISTS " ~ quote(TableName!STRUCT) ~
+				"(" ~ join(fields ~ keys, ",") ~ ")" ~ s, tuple());
 	}
 
 	///
 	unittest {
-		assert(QueryBuilder.create!User() == "CREATE TABLE IF NOT EXISTS 'User'('name' TEXT, 'age' INT)");
+		assert(QueryBuilder.create!User() == "CREATE TABLE IF NOT EXISTS 'User'('name' TEXT,'age' INT)");
 		assert(!__traits(compiles, QueryBuilder().create!int));
 	}
 
@@ -162,26 +189,28 @@ struct QueryBuilder(int STATE = Empty, BINDS = Tuple!(), string[] SELECTS = [])
 	static auto getFields(STRUCT, int n = 0)(STRUCT s, ref string []fields)
 	{
 		enum L = (Fields!STRUCT).length;
-		static if(n == L) {
-			return(tuple());
-		} else {
-			enum NAME = (FieldNameTuple!STRUCT)[n];
-			enum CN = ColumnName!(STRUCT, NAME);
-			static if(CN == "rowid") {
+		static if(n == L)
+			return tuple();
+		else {
+			enum NAME = (FieldNameTuple!STRUCT)[n],
+				 CN = ColumnName!(STRUCT, NAME);
+			static if(CN == "rowid")
 				return tuple(getFields!(STRUCT, n+1)(s, fields).expand);
-			} else {
+			else {
 				fields ~= CN;
 				return tuple(s.tupleof[n], getFields!(STRUCT, n+1)(s, fields).expand);
 			}
 		}
 	}
 
-	static const string[] options = [
+	static const options = [
 		"", "OR ROLLBACK ", "OR ABORT ", "OR REPLACE ", "OR FAIL "
 	];
 
-	public static auto insert(int OPTION = OR.None, STRUCT)(STRUCT s) if(isAggregateType!STRUCT)
+	static auto insert(int OPTION = OR.None, STRUCT)(STRUCT s) if(isAggregateType!STRUCT)
 	{
+		import std.algorithm.iteration : map;
+
 		string[] fields;
 		auto t = getFields(s, fields);
 		auto qms = map!(a => "?")(fields);
@@ -197,121 +226,121 @@ struct QueryBuilder(int STATE = Empty, BINDS = Tuple!(), string[] SELECTS = [])
 	}
 
 	///
-	public static auto select(STRING...)()
+	static auto select(STRING...)()
 	{
-		auto sql = "SELECT " ~ join([STRING], ", ");
+		auto sql = "SELECT " ~ join([STRING], ",");
 		return make!(Select, [STRING])(sql, tuple());
 	}
 	///
 	unittest {
 		assert(QueryBuilder.select!("only_one") == "SELECT only_one");
-		assert(QueryBuilder.select!("hey", "you") == "SELECT hey, you");
+		assert(QueryBuilder.select!("hey", "you") == "SELECT hey,you");
 	}
 
 	///
-	public static auto selectAllFrom(STRUCTS...)()
+	static auto selectAllFrom(STRUCTS...)()
 	{
-		string[] fields;
-		string[] tables;
-		foreach(I, Ti ; STRUCTS) {
+		string[] fields, tables;
+		foreach(I, Ti; STRUCTS) {
 			enum TABLE = TableName!Ti;
 
 			alias NAMES = FieldNameTuple!Ti;
-			foreach(N ; NAMES) {
+			foreach(N; NAMES)
 				fields ~= quote(TABLE) ~ "." ~ quote(ColumnName!(Ti, N));
-			}
 
 			tables ~= TABLE;
 		}
-		auto sql = "SELECT " ~ join(fields, ", ") ~ " FROM " ~ join(quote(tables), ",");
+		auto sql = "SELECT " ~ join(fields, ",") ~ " FROM " ~ join(quote(tables), ",");
 		return make!(From, [])(sql, tuple());
 	}
 	///
 	unittest {
-		assert(QueryBuilder.selectAllFrom!(Message, User) == "SELECT 'msg'.'rowid', 'msg'.'contents', 'User'.'name', 'User'.'age' FROM 'msg','User'");
+		assert(QueryBuilder.selectAllFrom!(Message, User) == "SELECT 'msg'.'rowid','msg'.'contents','User'.'name','User'.'age' FROM 'msg','User'");
 	}
 
 	///
-	public auto from(TABLES...)() if(STATE == Select && allString!TABLES)
+	auto from(TABLES...)() if(STATE == Select && allString!TABLES)
 	{
-		sql = sql ~ " FROM " ~ join([TABLES], ",");
+		sql ~= " FROM " ~ join([TABLES], ",");
 
 		return make!(From, SELECTS)(sql, args);
 	}
 
 	///
-	public auto from(TABLES...)() if(STATE == Select && allAggregate!TABLES)
+	auto from(TABLES...)() if(STATE == Select && allAggregate!TABLES)
 	{
 		static assert(checkFields!(SELECTS, TABLES), "Not all selected fields match column names");
 		string[] tables;
-		foreach(T ; TABLES) {
+		foreach(T; TABLES)
 			tables ~= TableName!T;
-		}
-		sql = sql ~ " FROM " ~ join(quote(tables), ",");
+		sql ~= " FROM " ~ join(quote(tables), ",");
 		return make!(From, SELECTS)(sql, args);
 	}
 
 	///
-	public auto set(string what, A...)(A a) if(STATE == Update)
+	auto set(string what, A...)(A a) if(STATE == Update)
 	{
 		mixin VerifyParams!(what, A);
 		return make!(Set)(sql ~ " SET " ~ what, tuple(a));
 	}
 
-	///
-	public static auto update(string table)()
-	{
-		return make!(Update)("UPDATE " ~ table, tuple());
+	static {
+		///
+		auto update(string table)()
+		{
+			return make!(Update)("UPDATE " ~ table, tuple());
+		}
+	
+		///
+		auto update(STRUCT)()
+		{
+			return make!(Update)("UPDATE " ~ TableName!STRUCT, tuple());
+		}
+	
+		///
+		auto update(STRUCT)(STRUCT s)
+		{
+			string[] fields;
+			auto t = getFields(s, fields);
+			return make!(Set)("UPDATE " ~ TableName!STRUCT ~ " SET " ~ join(fields, "=?,") ~ "=?", t);
+		}
 	}
 
-	///
-	public static auto update(STRUCT)()
-	{
-		return make!(Update)("UPDATE " ~ TableName!STRUCT, tuple());
-	}
-
-	///
-	public static auto update(STRUCT)(STRUCT s)
-	{
-		string[] fields;
-		auto t = getFields(s, fields);
-		return make!(Set)("UPDATE " ~ TableName!STRUCT ~ " SET " ~ join(fields, "=?, ") ~ "=?", t);
-	}
 	///
 	unittest {
 		User user = { name : "Jonas", age : 34 };
-		assert(QueryBuilder.update(user) == "UPDATE User SET name=?, age=?");
+		assert(QueryBuilder.update(user) == "UPDATE User SET name=?,age=?");
 	}
 
 	///
-	public auto where(string what, A...)(A args) if(STATE == Set)
+	auto where(string what, A...)(A args) if(STATE == Set)
 	{
 		mixin VerifyParams!(what, A);
 		return make!(SetWhere, SELECTS)(sql ~ " WHERE " ~ what, tuple(this.args.expand, args));
 	}
 
 	///
-	public auto where(string what, A...)(A args) if(STATE == From)
+	auto where(string what, A...)(A args) if(STATE == From)
 	{
 		mixin VerifyParams!(what, A);
 		return make!(SelectWhere, SELECTS)(sql ~ " WHERE " ~ what, tuple(this.args.expand, args));
 	}
 
 	///
-	public auto where(string what, A...)(A args) if(STATE == Delete)
+	auto where(string what, A...)(A args) if(STATE == Delete)
 	{
 		mixin VerifyParams!(what, A);
 		return make!(SelectWhere, SELECTS)(sql ~ " WHERE " ~ what, tuple(this.args.expand, args));
 	}
 
 	///
-	public static auto delete_(TABLE)() if(isAggregateType!TABLE)
+	static auto delete_(TABLE)() if(isAggregateType!TABLE)
 	{
 		return make!(Delete)("DELETE FROM " ~ TableName!TABLE, tuple());
 	}
 
 	///
-	public static auto delete_(string tablename)()
+	static auto delete_(string tablename)()
 	{
 		return make!(Delete)("DELETE FROM " ~ tablename);
 	}
@@ -324,16 +353,15 @@ struct QueryBuilder(int STATE = Empty, BINDS = Tuple!(), string[] SELECTS = [])
 ///
 unittest
 {
-	alias Q = QueryBuilder!(Empty);
-	alias C = ColumnName;
-
 	// This will map to a "User" table in our database
 	struct User {
 		string name;
 		int age;
 	}
+	alias Q = QueryBuilder!(),
+		  C = ColumnName;
 
-	assert(Q.create!User() == "CREATE TABLE IF NOT EXISTS 'User'('name' TEXT, 'age' INT)");
+	assert(Q.create!User() == "CREATE TABLE IF NOT EXISTS 'User'('name' TEXT,'age' INT)");
 
 	auto qb0 = Q.select!"name".from!User.where!"age=?"(12);
 
@@ -353,23 +381,21 @@ unittest
 
 	assert(Q.create!Message() == "CREATE TABLE IF NOT EXISTS 'msg'('contents' TEXT)");
 
-	Message m = { id : -1 /* Ingored */, contents : "Some message" };
+	Message m = { id : -1 /* Ignored */, contents : "Some message" };
 	auto qb = Q.insert(m);
 	assert(qb.sql == "INSERT INTO 'msg'('contents') VALUES(?)");
 	assert(qb.binds == tuple("Some message"));
-
-
 }
 
 unittest
 {
 	import std.algorithm.iteration : uniq;
 	import std.algorithm.searching : count;
-	alias Q = QueryBuilder!(Empty);
-	alias C = ColumnName;
+	alias Q = QueryBuilder!(),
+		  C = ColumnName;
 
 	// Make sure all these generate the same sql statement
-	string[] sql = [
+	auto sql = [
 		Q.select!("'msg'.'rowid'", "'msg'.'contents'").from!("'msg'").where!"'msg'.'rowid'=?"(1).sql,
 		Q.select!("'msg'.'rowid'", "'msg'.'contents'").from!Message.where!(C!(Message.id) ~ "=?")(1).sql,
 		Q.select!(C!(Message.id), C!(Message.contents)).from!Message.where!"'msg'.'rowid'=?"(1).sql,

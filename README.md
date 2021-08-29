@@ -20,8 +20,8 @@ User user = { name : "jake", age : 45 }; // rowid is not inserted, no need to se
 
 db.insert(user); // Rely on auto table creation when insert fails
 User[] users = array(db.selectAllWhere!(User, "age > ?")(30));
-auto jake = db.selectRowId!User(1);
-assert(jake.name == users[0].name == "jake");
+auto jake = db.selectRow!User(1);
+assert(jake.name == users[0].name && jake.name == "jake");
 ```
 
 
