@@ -7,11 +7,10 @@ struct sqltype { string type; }
 package:
 
 alias getAttr(T...) = __traits(getAttributes, T);
-alias getMember(alias I, alias N) = __traits(getMember, I, N);
 
 
 /// Try to remove 'name', return true on success
-debug bool tryRemove(string name) {
+bool tryRemove(string name) {
 	import std.file;
 	try {
 		std.file.remove(name);
@@ -22,12 +21,12 @@ debug bool tryRemove(string name) {
 }
 
 
-static string quote(string s, string q = "'") pure nothrow 
+string quote(string s, string q = "'") pure nothrow 
 {
 	return q ~ s ~ q;
 }
 
-static string[] quote(string[] s, string q = "'") pure nothrow 
+string[] quote(string[] s, string q = "'") pure nothrow 
 {
 	string[] res;
 	foreach(t ; s)
@@ -37,7 +36,9 @@ static string[] quote(string[] s, string q = "'") pure nothrow
 
 import std.traits;
 
-@property bool allString(STRING...)() {
+@property:
+
+bool allString(STRING...)() {
 	bool ok = true;
 	foreach(S ; STRING)
 		static if(is(S))
@@ -47,7 +48,7 @@ import std.traits;
 	return ok;
 }
 
-@property bool allAggregate(ARGS...)() {
+bool allAggregate(ARGS...)() {
 	bool ok = true;
 	foreach(A ; ARGS)
 		static if(is(A))

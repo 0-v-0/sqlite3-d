@@ -38,8 +38,6 @@ class SQLite3
 	/// Represents a sqlite3 statement
 	struct Query
 	{
-		private sqlite3* db;
-		private RefCounted!Statement stmt;
 		int lastCode = -1;
 
 		/// Construct a query from the string 'sql' into database 'db'
@@ -51,7 +49,10 @@ class SQLite3
 			stmt.s = s;
 			bind(args);
 		}
+
 	private:
+		sqlite3* db;
+		RefCounted!Statement stmt;
 
 		int bindArg(int pos, string arg)
 		{
@@ -63,7 +64,7 @@ class SQLite3
 			return sqlite3_bind_double(stmt, pos, arg);
 		}
 
-		 int bindArg(T)(int pos, T arg) if(isIntegral!T && T.sizeof <= 4) {
+		int bindArg(T)(int pos, T arg) if(isIntegral!T && T.sizeof <= 4) {
 			return sqlite3_bind_int(stmt, pos, arg);
 		}
 

@@ -25,7 +25,7 @@ mixin template TEST(string dbname)
 /// An Database with query building capabilities
 class Database : SQLite3
 {
-	alias QB = QueryBuilder!(Empty);
+	alias QB = QueryBuilder!();
 	// Returned from select-type methods where the row type is known
 	struct QueryIterator(T)
 	{
@@ -44,25 +44,25 @@ class Database : SQLite3
 		}
 	}
 
-	public this(string name)
+	this(string name)
 	{
 		super(name);
 	}
 
-	public bool create(T)()
+	bool create(T)()
 	{
 		auto q = Query(db, QB.create!T());
 		return q.step();
 	}
 
-	public QueryIterator!T selectAllWhere(T, string WHERE, ARGS...)(ARGS args)
+	QueryIterator!T selectAllWhere(T, string WHERE, ARGS...)(ARGS args)
 	{
 		auto q = Query(db, QB.selectAllFrom!T.where!WHERE(args));
 		q.bind(args);
 		return QueryIterator!T(q);
 	}
 
-	public T selectOneWhere(T, string WHERE, ARGS...)(ARGS args)
+	T selectOneWhere(T, string WHERE, ARGS...)(ARGS args)
 	{
 		auto q = Query(db, QB.selectAllFrom!T().where!WHERE(args));
 		q.bind(args);
@@ -72,7 +72,7 @@ class Database : SQLite3
 			throw new db_exception("No match");
 	}
 
-	public T selectRow(T)(ulong row)
+	T selectRow(T)(ulong row)
 	{
 		return selectOneWhere!(T, "rowid=?")(row);
 	}
@@ -99,7 +99,7 @@ class Database : SQLite3
 
 	};
 
-	bool insert(int OPTION = OR.None, T)(T row)
+	bool insert(OR OPTION = OR.None, T)(T row)
 	{
 		auto qb = QB.insert!OPTION(row);
 		Query q;

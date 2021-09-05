@@ -62,16 +62,21 @@ unittest {
 	assert(tuple(ColumnName!(Message.contents), ColumnName!(User.age)) == tuple("'msg'.'txt'", "'User'.'age'"));
 }
 
-enum {
+enum State {
 	Select, Set, Empty, SetWhere, From, SelectWhere, Update, Create, Insert, Delete
 };
 
 enum OR {
-	None, Rollback, Abort, Replace, Fail, Ignore
+	None = "",
+	Rollback = "OR ROLLBACK ",
+	Abort = "OR ABORT ",
+	Replace = "OR REPLACE ",
+	Fail = "OR FAIL ",
+	Ignore = ""
 }
 
 /** An instance of a query building process */
-struct QueryBuilder(int STATE = Empty, BINDS = Tuple!(), string[] SELECTS = [])
+struct QueryBuilder(State STATE = State.Empty, BINDS = Tuple!(), string[] SELECTS = [])
 {
 	BINDS args;
 	string sql;
@@ -105,7 +110,7 @@ private:
 	template sqlType(T) if(isIntegral!T || is(T == bool)) { enum sqlType = "INT"; }
 	template sqlType(T) if(is(T == void[])) { enum sqlType = "BLOB"; }
 
-	static auto make(int STATE = Empty, string[] SELECTS = [], BINDS)(string sql, BINDS binds)
+	static auto make(State STATE = State.Empty, string[] SELECTS = [], BINDS)(string sql, BINDS binds)
 	{
 		return QueryBuilder!(STATE, BINDS, SELECTS)(sql, binds);
 	}
@@ -174,7 +179,7 @@ public:
 		if(pkeys)
 			keys ~= "PRIMARY KEY(" ~ pkeys.join(",") ~ ")";
 
-		return make!(Create)("CREATE TABLE IF NOT EXISTS " ~ quote(TableName!STRUCT) ~
+		return make!(State.Create)("CREATE TABLE IF NOT EXISTS " ~ quote(TableName!STRUCT) ~
 				"(" ~ join(fields ~ keys, ",") ~ ")" ~ s, tuple());
 	}
 
@@ -203,18 +208,14 @@ public:
 		}
 	}
 
-	static const options = [
-		"", "OR ROLLBACK ", "OR ABORT ", "OR REPLACE ", "OR FAIL "
-	];
-
-	static auto insert(int OPTION = OR.None, STRUCT)(STRUCT s) if(isAggregateType!STRUCT)
+	static auto insert(OR OPTION = OR.None, STRUCT)(STRUCT s) if(isAggregateType!STRUCT)
 	{
 		import std.algorithm.iteration : map;
 
 		string[] fields;
 		auto t = getFields(s, fields);
 		auto qms = map!(a => "?")(fields);
-		return make!(Insert)("INSERT " ~ options[OPTION] ~ "INTO " ~ quote(TableName!STRUCT) ~ "(" ~ join(quote(fields), ",") ~ ") VALUES(" ~ join(qms, ",") ~ ")", t);
+		return make!(State.Insert)("INSERT " ~ OPTION ~ "INTO " ~ quote(TableName!STRUCT) ~ "(" ~ join(quote(fields), ",") ~ ") VALUES(" ~ join(qms, ",") ~ ")", t);
 	}
 
 	///
@@ -228,8 +229,9 @@ public:
 	///
 	static auto select(STRING...)()
 	{
-		auto sql = "SELECT " ~ join([STRING], ",");
-		return make!(Select, [STRING])(sql, tuple());
+		const arr = [STRING];
+		auto sql = "SELECT " ~ join(arr, ",");
+		return make!(State.Select, arr)(sql, tuple());
 	}
 	///
 	unittest {
@@ -251,7 +253,7 @@ public:
 			tables ~= TABLE;
 		}
 		auto sql = "SELECT " ~ join(fields, ",") ~ " FROM " ~ join(quote(tables), ",");
-		return make!(From, [])(sql, tuple());
+		return make!(State.From, [])(sql, tuple());
 	}
 	///
 	unittest {
@@ -259,42 +261,42 @@ public:
 	}
 
 	///
-	auto from(TABLES...)() if(STATE == Select && allString!TABLES)
+	auto from(TABLES...)() if(STATE == State.Select && allString!TABLES)
 	{
 		sql ~= " FROM " ~ join([TABLES], ",");
 
-		return make!(From, SELECTS)(sql, args);
+		return make!(State.From, SELECTS)(sql, args);
 	}
 
 	///
-	auto from(TABLES...)() if(STATE == Select && allAggregate!TABLES)
+	auto from(TABLES...)() if(STATE == State.Select && allAggregate!TABLES)
 	{
 		static assert(checkFields!(SELECTS, TABLES), "Not all selected fields match column names");
 		string[] tables;
 		foreach(T; TABLES)
 			tables ~= TableName!T;
 		sql ~= " FROM " ~ join(quote(tables), ",");
-		return make!(From, SELECTS)(sql, args);
+		return make!(State.From, SELECTS)(sql, args);
 	}
 
 	///
-	auto set(string what, A...)(A a) if(STATE == Update)
+	auto set(string what, A...)(A a) if(STATE == State.Update)
 	{
 		mixin VerifyParams!(what, A);
-		return make!(Set)(sql ~ " SET " ~ what, tuple(a));
+		return make!(State.Set)(sql ~ " SET " ~ what, tuple(a));
 	}
 
 	static {
 		///
 		auto update(string table)()
 		{
-			return make!(Update)("UPDATE " ~ table, tuple());
+			return make!(State.Update)("UPDATE " ~ table, tuple());
 		}
 	
 		///
 		auto update(STRUCT)()
 		{
-			return make!(Update)("UPDATE " ~ TableName!STRUCT, tuple());
+			return make!(State.Update)("UPDATE " ~ TableName!STRUCT, tuple());
 		}
 	
 		///
@@ -302,7 +304,7 @@ public:
 		{
 			string[] fields;
 			auto t = getFields(s, fields);
-			return make!(Set)("UPDATE " ~ TableName!STRUCT ~ " SET " ~ join(fields, "=?,") ~ "=?", t);
+			return make!(State.Set)("UPDATE " ~ TableName!STRUCT ~ " SET " ~ join(fields, "=?,") ~ "=?", t);
 		}
 	}
 
@@ -313,36 +315,36 @@ public:
 	}
 
 	///
-	auto where(string what, A...)(A args) if(STATE == Set)
+	auto where(string what, A...)(A args) if(STATE == State.Set)
 	{
 		mixin VerifyParams!(what, A);
-		return make!(SetWhere, SELECTS)(sql ~ " WHERE " ~ what, tuple(this.args.expand, args));
+		return make!(State.SetWhere, SELECTS)(sql ~ " WHERE " ~ what, tuple(this.args.expand, args));
 	}
 
 	///
-	auto where(string what, A...)(A args) if(STATE == From)
+	auto where(string what, A...)(A args) if(STATE == State.From)
 	{
 		mixin VerifyParams!(what, A);
-		return make!(SelectWhere, SELECTS)(sql ~ " WHERE " ~ what, tuple(this.args.expand, args));
+		return make!(State.SelectWhere, SELECTS)(sql ~ " WHERE " ~ what, tuple(this.args.expand, args));
 	}
 
 	///
-	auto where(string what, A...)(A args) if(STATE == Delete)
+	auto where(string what, A...)(A args) if(STATE == State.Delete)
 	{
 		mixin VerifyParams!(what, A);
-		return make!(SelectWhere, SELECTS)(sql ~ " WHERE " ~ what, tuple(this.args.expand, args));
+		return make!(State.SelectWhere, SELECTS)(sql ~ " WHERE " ~ what, tuple(this.args.expand, args));
 	}
 
 	///
 	static auto delete_(TABLE)() if(isAggregateType!TABLE)
 	{
-		return make!(Delete)("DELETE FROM " ~ TableName!TABLE, tuple());
+		return make!(State.Delete)("DELETE FROM " ~ TableName!TABLE, tuple());
 	}
 
 	///
 	static auto delete_(string tablename)()
 	{
-		return make!(Delete)("DELETE FROM " ~ tablename);
+		return make!(State.Delete)("DELETE FROM " ~ tablename);
 	}
 	///
 	unittest {
