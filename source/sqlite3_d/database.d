@@ -39,9 +39,7 @@ class Database : SQLite3
 
 		bool empty() { return finished; }
 		void popFront() { finished = !query.step(); }
-		T front() {
-			return query.get!T();
-		}
+		T front() { return query.get!T(); }
 	}
 
 	this(string name)

@@ -2,8 +2,7 @@ module sqlite3_d.querybuilder;
 
 import sqlite3_d.utils;
 
-version(unittest)
-{
+version(unittest) {
 	package {
 		struct User {
 			string name;
@@ -22,7 +21,7 @@ import std.typecons : tuple, Tuple;
 import std.string : join, count;
 
 /// Get the tablename of `STRUCT`
-static template TableName(alias STRUCT) {
+template TableName(alias STRUCT) {
 	enum ATTRS = getAttr!STRUCT;
 	static if(ATTRS.length > 0 && is(typeof(ATTRS[0]) == sqlname))
 		enum TableName = ATTRS[0].name;
@@ -36,7 +35,7 @@ unittest {
 }
 
 /// Generate a column name given a FIELD in STRUCT.
-static template ColumnName(STRUCT, string FIELD) if(isAggregateType!STRUCT) {
+template ColumnName(STRUCT, string FIELD) if(isAggregateType!STRUCT) {
 	enum ATTRS = __traits(getAttributes, __traits(getMember, STRUCT, FIELD));
 	static if(ATTRS.length > 0 && is(typeof(ATTRS[0]) == sqlname))
 		enum ColumnName = ATTRS[0].name;
@@ -45,7 +44,7 @@ static template ColumnName(STRUCT, string FIELD) if(isAggregateType!STRUCT) {
 }
 
 /// Return the qualifed column name of the given struct field
-static template ColumnName(alias FIELDNAME)
+template ColumnName(alias FIELDNAME)
 {
 	enum ATTRS = getAttr!FIELDNAME;
 	static if(ATTRS.length > 0 && is(typeof(ATTRS[0]) == sqlname))
@@ -105,16 +104,16 @@ private:
 		else
 			return checkField!(FIELDS[0], TABLES);
 	}
-	template sqlType(T) if(isSomeString!T) { enum sqlType = "TEXT"; }
-	template sqlType(T) if(isFloatingPoint!T) { enum sqlType = "REAL"; }
-	template sqlType(T) if(isIntegral!T || is(T == bool)) { enum sqlType = "INT"; }
-	template sqlType(T) if(is(T == void[])) { enum sqlType = "BLOB"; }
 
 	static auto make(State STATE = State.Empty, string[] SELECTS = [], BINDS)(string sql, BINDS binds)
 	{
 		return QueryBuilder!(STATE, BINDS, SELECTS)(sql, binds);
 	}
 
+	template sqlType(T) if(isSomeString!T) { enum sqlType = "TEXT"; }
+	template sqlType(T) if(isFloatingPoint!T) { enum sqlType = "REAL"; }
+	template sqlType(T) if(isIntegral!T || is(T == bool)) { enum sqlType = "INT"; }
+	template sqlType(T) if(is(T == void[])) { enum sqlType = "BLOB"; }
 	mixin template VerifyParams(string what, ARGS...)
 	{
 		static assert(count(what, "?") == A.length, "Incorrect number parameters");
@@ -292,13 +291,13 @@ public:
 		{
 			return make!(State.Update)("UPDATE " ~ table, tuple());
 		}
-	
+
 		///
 		auto update(STRUCT)()
 		{
 			return make!(State.Update)("UPDATE " ~ TableName!STRUCT, tuple());
 		}
-	
+
 		///
 		auto update(STRUCT)(STRUCT s)
 		{
