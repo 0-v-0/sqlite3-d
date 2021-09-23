@@ -17,7 +17,7 @@ class db_exception : Exception {
 package alias toz = toStringz;
 
 /// Setup code for tests
-debug mixin template TEST(string dbname)
+version(unittest) package mixin template TEST(string dbname)
 {
 	SQLite3 db = () {
 		tryRemove(dbname ~ ".db");
@@ -84,23 +84,16 @@ class SQLite3
 			return sqlite3_bind_blob(stmt, pos, arg.ptr, cast(int)arg.length, null);
 		}
 
-		/// Bind these args in order to '?' marks in statement
-		public void bind(ARGS...)(ARGS args)
-		{
-			int bi = 1;
-			foreach(i, a ; args) {
-				int rc = bindArg(bi++, a);
-				checkError("Bind failed: ", rc);
-			}
-		}
-
 		T getArg(T)(int pos)
 		{
 			auto typ = sqlite3_column_type(stmt, pos);
 			static if(isIntegral!T) {
 				enforce!(db_exception)(typ == SQLITE_INTEGER,
 						"Column is not an integer");
-				return cast(T)sqlite3_column_int64(stmt, pos);
+				static if(T.sizeof > 4)
+					return cast(T)sqlite3_column_int64(stmt, pos);
+				else
+					return cast(T)sqlite3_column_int(stmt, pos);
 			} else static if(isSomeString!T) {
 				enforce!(db_exception)(typ == SQLITE3_TEXT,
 						"Column is not an string");
@@ -122,7 +115,16 @@ class SQLite3
 		{
 			t = getArg!(T)(pos);
 		}
+
 	public:
+		/// Bind these args in order to '?' marks in statement
+		void bind(ARGS...)(ARGS args)
+		{
+			foreach(i, a; args) {
+				int rc = bindArg(i + 1, a);
+				checkError("Bind failed: ", rc);
+			}
+		}
 
 		// Find column by name
 		int findColumn(string name)
@@ -151,7 +153,7 @@ class SQLite3
 			if(lastCode == -1)
 				step();
 			T t;
-			foreach(N ; FieldNameTuple!T) {
+			foreach(N; FieldNameTuple!T) {
 				enum ATTRS = __traits(getAttributes, __traits(getMember, T, N));
 				static if(ATTRS.length > 0 && is(typeof(ATTRS[0]) == sqlname))
 					enum colName = ATTRS[0].name;
@@ -166,7 +168,7 @@ class SQLite3
 		Tuple!T get(T...)()
 		{
 			Tuple!(T) t;
-			foreach(I, Ti ; T)
+			foreach(I, Ti; T)
 				t[I] = get!(Ti, I)();
 			return t;
 		}
@@ -210,9 +212,7 @@ class SQLite3
 		// Try not stepping... assert(q.step());
 		assert(q.get!(int,int)() == tuple(1,2));
 
-		struct Test {
-			int a, b;
-		}
+		struct Test { int a, b; }
 
 		auto test = q.get!Test();
 		assert(test.a == 1 && test.b == 2);

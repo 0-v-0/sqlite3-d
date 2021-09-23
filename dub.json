@@ -9,5 +9,4 @@
 	"hompage" : "https://github.com/sasq64/sqlite3-d",
 	"targetType" : "library",
 	"libs": [ "sqlite3" ]
-
 }

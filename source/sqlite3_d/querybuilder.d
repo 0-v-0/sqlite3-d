@@ -2,7 +2,7 @@ module sqlite3_d.querybuilder;
 
 import sqlite3_d.utils;
 
-version(unittest) {
+version(unittest)
 	package {
 		struct User {
 			string name;
@@ -14,7 +14,6 @@ version(unittest) {
 			string contents;
 		}
 	}
-}
 
 import std.traits;
 import std.typecons : tuple, Tuple;
