@@ -8,7 +8,6 @@ package:
 
 alias getAttr(T...) = __traits(getAttributes, T);
 
-
 /// Try to remove 'name', return true on success
 bool tryRemove(string name) {
 	import std.file;
@@ -57,4 +56,3 @@ bool allAggregate(ARGS...)() {
 		ok = false;
 	return ok;
 }
-
