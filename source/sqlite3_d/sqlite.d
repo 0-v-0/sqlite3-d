@@ -14,8 +14,6 @@ class db_exception : Exception {
 	this(string msg, string file = __FILE__, size_t line = __LINE__) { super(msg, file, line); }
 };
 
-package alias toz = toStringz;
-
 /// Setup code for tests
 version(unittest) package mixin template TEST(string dbname)
 {
@@ -50,6 +48,8 @@ class SQLite3
 			bind(args);
 		}
 
+		~this() { if(db) sqlite3_close(db); db = null; }
+
 	private:
 		sqlite3* db;
 		RefCounted!Statement stmt;
@@ -74,46 +74,42 @@ class SQLite3
 
 		int bindArg(int pos, void[] arg)
 		{
-			// sqlite3_bind_blob64
-			return sqlite3_bind_blob(stmt, pos, arg.ptr, cast(int)arg.length, null);
-		}
-
-		int bindArg(int pos, ubyte[] arg)
-		{
-			// sqlite3_bind_blob64
-			return sqlite3_bind_blob(stmt, pos, arg.ptr, cast(int)arg.length, null);
+			static if(size_t.sizeof > 4)
+				return sqlite3_bind_blob64(stmt, pos, arg.ptr, arg.length, null);
+			else
+				return sqlite3_bind_blob(stmt, pos, arg.ptr, arg.length, null);
 		}
 
 		T getArg(T)(int pos)
 		{
-			auto typ = sqlite3_column_type(stmt, pos);
+			int typ = sqlite3_column_type(stmt, pos);
 			static if(isIntegral!T) {
-				enforce!(db_exception)(typ == SQLITE_INTEGER,
+				enforce!db_exception(typ == SQLITE_INTEGER,
 						"Column is not an integer");
 				static if(T.sizeof > 4)
 					return cast(T)sqlite3_column_int64(stmt, pos);
 				else
 					return cast(T)sqlite3_column_int(stmt, pos);
 			} else static if(isSomeString!T) {
-				enforce!(db_exception)(typ == SQLITE3_TEXT,
+				enforce!db_exception(typ == SQLITE3_TEXT,
 						"Column is not an string");
-				return to!string(sqlite3_column_text(stmt, pos));
+				return fromStringz(sqlite3_column_text(stmt, pos)).idup;
 			} else static if(isFloatingPoint!T) {
-				enforce!(db_exception)(typ == SQLITE_FLOAT,
+				enforce!db_exception(typ == SQLITE_FLOAT,
 						"Column is not an real");
 				return sqlite3_column_double(stmt, pos);
 			} else {
-				enforce!(db_exception)(typ == SQLITE_BLOB,
+				enforce!db_exception(typ == SQLITE_BLOB,
 						"Column is not a blob");
-				void* ptr = cast(void*)sqlite3_column_blob(stmt, pos);
+				auto ptr = sqlite3_column_blob(stmt, pos);
 				int size = sqlite3_column_bytes(stmt, pos);
-				return ptr[0..size].dup;
+				return cast(T)ptr[0..size].dup;
 			}
 		}
 
 		void getArg(T)(int pos, ref T t)
 		{
-			t = getArg!(T)(pos);
+			t = getArg!T(pos);
 		}
 
 	public:
@@ -167,7 +163,7 @@ class SQLite3
 		/// Get current row as a tuple
 		Tuple!T get(T...)()
 		{
-			Tuple!(T) t;
+			Tuple!T t;
 			foreach(I, Ti; T)
 				t[I] = get!(Ti, I)();
 			return t;
@@ -184,12 +180,15 @@ class SQLite3
 		/// Reset the statement, to step through the resulting rows again.
 		void reset() { sqlite3_reset(stmt); }
 
+		void spin() { while (step()) {} }
+
 		private void checkError(string prefix, int rc, string file = __FILE__, int line = __LINE__)
 		{
 			if(rc < 0)
 				rc = sqlite3_errcode(db);
 			if(rc != SQLITE_OK && rc != SQLITE_ROW && rc != SQLITE_DONE)
-				throw new db_exception(prefix ~ " (" ~ to!string(rc) ~ "): " ~ to!string(sqlite3_errmsg(db)), file, line);
+				throw new db_exception(prefix ~ " (" ~ rc.to!string ~ "): " ~
+					sqlite3_errmsg(db).toStr, file, line);
 		}
 	}
 
@@ -205,28 +204,28 @@ class SQLite3
 		assert(!q.step());
 		q = Query(db, "select b from TEST where a == ?", 1);
 		assert(q.step());
-		assert(q.get!int() == 2);
+		assert(q.get!int == 2);
 		assert(!q.step());
 
 		q = Query(db, "select a,b from TEST where b == ?", 2);
 		// Try not stepping... assert(q.step());
-		assert(q.get!(int,int)() == tuple(1,2));
+		assert(q.get!(int,int) == tuple(1,2));
 
 		struct Test { int a, b; }
 
-		auto test = q.get!Test();
+		auto test = q.get!Test;
 		assert(test.a == 1 && test.b == 2);
 
 		assert(!q.step());
 
 		q.reset();
 		assert(q.step());
-		assert(q.get!(int, int)() == tuple(1,2));
+		assert(q.get!(int, int) == tuple(1,2));
 
 		// Test exception
 		bool caught = false;
 		try {
-			q.get!(string);
+			q.get!string;
 		} catch(db_exception e) {
 			caught = true;
 		}
@@ -236,12 +235,27 @@ class SQLite3
 	/** Create a SQLite3 from a database file. If file does not exist, the
 	  * database will be initialized as new
 	 */
-	this(string dbFile)
+	this(string dbFile, int busyTimeout = 500)
 	{
 		int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
 		int rc = sqlite3_open_v2(dbFile.toz, &db, flags, null);
-		if(rc != SQLITE_OK)
-			throw new db_exception("Could not open database");
+		if (!rc)
+			sqlite3_busy_timeout(db, busyTimeout);
+		if(rc != SQLITE_OK) {
+			auto errmsg = fromStringz(sqlite3_errmsg(db)).idup;
+			sqlite3_close(db);
+			db = null;
+			throw new db_exception("Could not open database:" ~ errmsg);
+		}
+	}
+
+	/// Execute multiple statements
+	int execSQL(string sql, out string errmsg)
+	{
+		char* err_msg;
+		int rc = sqlite3_exec(db, sql.toz, null, null, &err_msg);
+		errmsg = fromStringz(err_msg).idup;
+		return rc;
 	}
 
 	/// Execute an sql statement directly, binding the args to it
@@ -250,7 +264,7 @@ class SQLite3
 		auto q = Query(db, sql);
 		q.bind(args);
 		q.step();
-		return (q.lastCode == SQLITE_DONE || q.lastCode == SQLITE_ROW);
+		return q.lastCode == SQLITE_DONE || q.lastCode == SQLITE_ROW;
 	}
 
 	///
@@ -263,8 +277,7 @@ class SQLite3
 	/// Return 'true' if database contains the given table
 	bool hasTable(string table)
 	{
-		return query(
-			"SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+		return query("SELECT name FROM sqlite_master WHERE type='table' AND name=?",
 			table).step();
 	}
 
@@ -308,9 +321,9 @@ class SQLite3
 		return q;
 	}
 
-	auto commit() { return exec("commit"); }
-	auto begin() { return exec("begin"); }
-	auto rollback() { return exec("rollback"); }
+	bool commit() { return exec("commit"); }
+	bool begin() { return exec("begin"); }
+	bool rollback() { return exec("rollback"); }
 
 	unittest {
 		mixin TEST!"transaction";

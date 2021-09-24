@@ -1,5 +1,7 @@
 module sqlite3_d.utils;
 
+import std.string;
+
 struct sqlname { string name; }
 struct sqlkey { string key; }
 struct sqltype { string type; }
@@ -7,6 +9,10 @@ struct sqltype { string type; }
 package:
 
 alias getAttr(T...) = __traits(getAttributes, T);
+alias toz = toStringz;
+auto toStr(T)(T ptr) {
+	return fromStringz(ptr).idup;
+}
 
 /// Try to remove 'name', return true on success
 bool tryRemove(string name) {

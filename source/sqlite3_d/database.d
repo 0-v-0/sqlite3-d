@@ -41,14 +41,14 @@ class Database : SQLite3
 
 		bool empty() { return finished; }
 		void popFront() { finished = !query.step(); }
-		T front() { return query.get!T(); }
+		T front() { return query.get!T; }
 	}
 
 	this(string name) { super(name); }
 
 	bool create(T)()
 	{
-		return Query(db, QB.create!T()).step();
+		return Query(db, QB.create!T).step();
 	}
 
 	QueryIterator!T selectAllWhere(T, string WHERE, ARGS...)(ARGS args)
@@ -60,10 +60,10 @@ class Database : SQLite3
 
 	T selectOneWhere(T, string WHERE, ARGS...)(ARGS args)
 	{
-		auto q = Query(db, QB.selectAllFrom!T().where!WHERE(args));
+		auto q = Query(db, QB.selectAllFrom!T.where!WHERE(args));
 		q.bind(args);
 		if(q.step())
-			return q.get!T();
+			return q.get!T;
 		throw new db_exception("No match");
 	}
 
@@ -129,9 +129,9 @@ unittest
 		int Group;
 	}
 
-	db.create!Group();
+	db.create!Group;
 	Group g = { 3 };
 	db.insert(g);
-	Group gg = db.selectOneWhere!(Group, "\"Group\"=3");
+	Group gg = db.selectOneWhere!(Group, `"Group"=3`);
 	assert(gg.Group == g.Group);
 }

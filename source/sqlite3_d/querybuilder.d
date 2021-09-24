@@ -213,7 +213,7 @@ public:
 		string[] fields;
 		auto t = getFields(s, fields);
 		auto qms = map!(a => "?")(fields);
-		return make!(State.Insert)("INSERT " ~ OPTION ~ "INTO " ~ quote(TableName!STRUCT) ~ "(" ~ join(quote(fields), ",") ~ ") VALUES(" ~ join(qms, ",") ~ ")", t);
+		return make!(State.Insert)("INSERT " ~ OPTION ~ "INTO " ~ quote(TableName!STRUCT) ~ "(" ~ quote(fields).join(",") ~ ") VALUES(" ~ qms.join(",") ~ ")", t);
 	}
 
 	///
@@ -228,7 +228,7 @@ public:
 	static auto select(STRING...)()
 	{
 		const arr = [STRING];
-		auto sql = "SELECT " ~ join(arr, ",");
+		auto sql = "SELECT " ~ arr.join(",");
 		return make!(State.Select, arr)(sql, tuple());
 	}
 	///
@@ -250,7 +250,7 @@ public:
 
 			tables ~= TABLE;
 		}
-		auto sql = "SELECT " ~ join(fields, ",") ~ " FROM " ~ join(quote(tables), ",");
+		auto sql = "SELECT " ~ fields.join(",") ~ " FROM " ~ quote(tables).join(",");
 		return make!(State.From, [])(sql, tuple());
 	}
 	///
@@ -261,7 +261,7 @@ public:
 	///
 	auto from(TABLES...)() if(STATE == State.Select && allString!TABLES)
 	{
-		sql ~= " FROM " ~ join([TABLES], ",");
+		sql ~= " FROM " ~ [TABLES].join(",");
 
 		return make!(State.From, SELECTS)(sql, args);
 	}
@@ -273,7 +273,7 @@ public:
 		string[] tables;
 		foreach(T; TABLES)
 			tables ~= TableName!T;
-		sql ~= " FROM " ~ join(quote(tables), ",");
+		sql ~= " FROM " ~ quote(tables).join(",");
 		return make!(State.From, SELECTS)(sql, args);
 	}
 
@@ -348,6 +348,8 @@ public:
 	unittest {
 		QueryBuilder.delete_!User.where!"name=?"("greg");
 	}
+
+	alias del = delete_;
 }
 
 ///
