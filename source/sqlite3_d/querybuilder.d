@@ -2,18 +2,17 @@ module sqlite3_d.querybuilder;
 
 import sqlite3_d.utils;
 
-version(unittest)
-	package {
-		struct User {
-			string name;
-			int age;
-		}
-
-		@sqlname("msg") struct Message {
-			@sqlname("rowid") int id;
-			string contents;
-		}
+version(unittest) package {
+	struct User {
+		string name;
+		int age;
 	}
+
+	@sqlname("msg") struct Message {
+		@sqlname("rowid") int id;
+		string contents;
+	}
+}
 
 import std.traits;
 import std.typecons : tuple, Tuple;
@@ -115,7 +114,7 @@ private:
 	template sqlType(T) if(is(T == void[])) { enum sqlType = "BLOB"; }
 	mixin template VerifyParams(string what, ARGS...)
 	{
-		static assert(count(what, "?") == A.length, "Incorrect number parameters");
+		static assert(what.count("?") == A.length, "Incorrect number parameters");
 	}
 
 public:
@@ -183,7 +182,7 @@ public:
 
 	///
 	unittest {
-		assert(QueryBuilder.create!User() == "CREATE TABLE IF NOT EXISTS 'User'('name' TEXT,'age' INT)");
+		assert(QueryBuilder.create!User == "CREATE TABLE IF NOT EXISTS 'User'('name' TEXT,'age' INT)");
 		assert(!__traits(compiles, QueryBuilder().create!int));
 	}
 
@@ -363,7 +362,7 @@ unittest
 	alias Q = QueryBuilder!(),
 		  C = ColumnName;
 
-	assert(Q.create!User() == "CREATE TABLE IF NOT EXISTS 'User'('name' TEXT,'age' INT)");
+	assert(Q.create!User == "CREATE TABLE IF NOT EXISTS 'User'('name' TEXT,'age' INT)");
 
 	auto qb0 = Q.select!"name".from!User.where!"age=?"(12);
 
@@ -381,7 +380,7 @@ unittest
 	// Note that virtual "rowid" field is handled differently -- it will not be created
 	// by create(), and not inserted into by insert()
 
-	assert(Q.create!Message() == "CREATE TABLE IF NOT EXISTS 'msg'('contents' TEXT)");
+	assert(Q.create!Message == "CREATE TABLE IF NOT EXISTS 'msg'('contents' TEXT)");
 
 	Message m = { id : -1 /* Ignored */, contents : "Some message" };
 	auto qb = Q.insert(m);

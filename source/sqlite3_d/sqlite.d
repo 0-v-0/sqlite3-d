@@ -36,11 +36,12 @@ class SQLite3
 	/// Represents a sqlite3 statement
 	struct Query
 	{
-		int lastCode = -1;
+		int lastCode;
 
 		/// Construct a query from the string 'sql' into database 'db'
 		this(ARGS...)(sqlite3* db, string sql, ARGS args)
 		{
+			lastCode = -1;
 			sqlite3_stmt* s = null;
 			int rc = sqlite3_prepare_v2(db, sql.toz, -1, &s, null);
 			checkError("Prepare failed: ", rc);
@@ -56,7 +57,10 @@ class SQLite3
 
 		int bindArg(int pos, string arg)
 		{
-			return sqlite3_bind_text(stmt, pos, arg.ptr, cast(int)arg.length, null);
+			static if(size_t.sizeof > 4)
+				return sqlite3_bind_text64(stmt, pos, arg.ptr, arg.length, null, SQLITE_UTF8);
+			else
+				return sqlite3_bind_text(stmt, pos, arg.ptr, cast(int)arg.length, null);
 		}
 
 		int bindArg(int pos, double arg)
@@ -77,7 +81,7 @@ class SQLite3
 			static if(size_t.sizeof > 4)
 				return sqlite3_bind_blob64(stmt, pos, arg.ptr, arg.length, null);
 			else
-				return sqlite3_bind_blob(stmt, pos, arg.ptr, arg.length, null);
+				return sqlite3_bind_blob(stmt, pos, arg.ptr, cast(int)arg.length, null);
 		}
 
 		T getArg(T)(int pos)
@@ -261,8 +265,7 @@ class SQLite3
 	/// Execute an sql statement directly, binding the args to it
 	bool exec(ARGS...)(string sql, ARGS args)
 	{
-		auto q = Query(db, sql);
-		q.bind(args);
+		auto q = Query(db, sql, args);
 		q.step();
 		return q.lastCode == SQLITE_DONE || q.lastCode == SQLITE_ROW;
 	}
@@ -308,17 +311,13 @@ class SQLite3
 	/// Create query from string and args to bind
 	Query query(ARGS...)(string sql, ARGS args)
 	{
-		auto q = Query(db, sql);
-		q.bind(args);
-		return q;
+		return Query(db, sql, args);
 	}
 
 	/// Create query from QueryBuilder like class
 	Query query(SOMEQUERY)(SOMEQUERY sq) if(hasMember!(SOMEQUERY, "sql") && hasMember!(SOMEQUERY, "binds"))
 	{
-		auto q = Query(db, sq.sql);
-		q.bind(sq.binds.expand);
-		return q;
+		return Query(db, sq.sql, sq.binds.expand);
 	}
 
 	bool commit() { return exec("commit"); }

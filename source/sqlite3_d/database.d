@@ -32,16 +32,22 @@ class Database : SQLite3
 	struct QueryIterator(T)
 	{
 		Query query;
-		bool finished;
-		this(Query q)
-		{
-			query = q;
-			finished = !query.step();
-		}
+		this(Query q) { query = q; }
 
-		bool empty() { return finished; }
-		void popFront() { finished = !query.step(); }
+		bool empty() {
+			import etc.c.sqlite3;
+
+			if (query.lastCode < 0)
+				query.step();
+			return query.lastCode != SQLITE_ROW;
+		}
+		void popFront() { query.step(); }
 		T front() { return query.get!T; }
+	}
+
+	unittest {
+		QueryIterator!int qi;
+		assert(qi.empty());
 	}
 
 	this(string name) { super(name); }
@@ -53,15 +59,13 @@ class Database : SQLite3
 
 	QueryIterator!T selectAllWhere(T, string WHERE, ARGS...)(ARGS args)
 	{
-		auto q = Query(db, QB.selectAllFrom!T.where!WHERE(args));
-		q.bind(args);
+		auto q = Query(db, QB.selectAllFrom!T.where!WHERE(args), args);
 		return QueryIterator!T(q);
 	}
 
 	T selectOneWhere(T, string WHERE, ARGS...)(ARGS args)
 	{
-		auto q = Query(db, QB.selectAllFrom!T.where!WHERE(args));
-		q.bind(args);
+		auto q = Query(db, QB.selectAllFrom!T.where!WHERE(args), args);
 		if(q.step())
 			return q.get!T;
 		throw new db_exception("No match");
@@ -77,7 +81,7 @@ class Database : SQLite3
 		import std.array : array;
 		import std.algorithm.iteration : fold;
 
-		db.create!User();
+		db.create!User;
 		db.insert(User("jonas", 55));
 		db.insert(User("oliver", 91));
 		db.insert(User("emma", 12));
@@ -99,10 +103,10 @@ class Database : SQLite3
 		if(autoCreateTable) {
 			try {
 				q = Query(db, qb);
-			} catch(db_exception dbe) {
+			} catch(db_exception e) {
 				if(hasTable(TableName!T))
 					return false;
-				create!T();
+				create!T;
 				q = Query(db, qb);
 			}
 		} else
