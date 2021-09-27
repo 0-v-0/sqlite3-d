@@ -96,11 +96,11 @@ class SQLite3
 					return cast(T)sqlite3_column_int(stmt, pos);
 			} else static if(isSomeString!T) {
 				enforce!db_exception(typ == SQLITE3_TEXT,
-						"Column is not an string");
+						"Column is not a string");
 				return fromStringz(sqlite3_column_text(stmt, pos)).idup;
 			} else static if(isFloatingPoint!T) {
 				enforce!db_exception(typ == SQLITE_FLOAT,
-						"Column is not an real");
+						"Column is not a real");
 				return sqlite3_column_double(stmt, pos);
 			} else {
 				enforce!db_exception(typ == SQLITE_BLOB,
@@ -293,19 +293,19 @@ class SQLite3
 	}
 
 	/// Return the 'rowid' produced by the last insert statement
-	long lastRowid() { return sqlite3_last_insert_rowid(db); }
+	@property long lastRowid() { return sqlite3_last_insert_rowid(db); }
 
 	///
 	unittest {
 		mixin TEST!("lastrowid");
 		assert(db.exec("CREATE TABLE MyTable(name STRING)"));
 		assert(db.exec("INSERT INTO MyTable VALUES (?)", "hey"));
-		assert(db.lastRowid() == 1);
+		assert(db.lastRowid == 1);
 		assert(db.exec("INSERT INTO MyTable VALUES (?)", "ho"));
-		assert(db.lastRowid() == 2);
+		assert(db.lastRowid == 2);
 		// Only insert updates the last rowid
 		assert(db.exec("UPDATE MyTable SET name=? WHERE rowid=?", "woo", 1));
-		assert(db.lastRowid() == 2);
+		assert(db.lastRowid == 2);
 	}
 
 	/// Create query from string and args to bind

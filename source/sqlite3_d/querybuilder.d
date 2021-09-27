@@ -87,8 +87,8 @@ private:
 			enum tableName = TableName!TABLE;
 			foreach(N; FieldNameTuple!TABLE) {
 				enum colName = ColumnName!(TABLE,N);
-				if(((colName == F) || (tableName ~ "." ~ colName == F))
-					|| ((quote(colName) == F) || (quote(tableName) ~ "." ~ quote(colName) == F)))
+				if(colName == F || tableName ~ "." ~ colName == F
+				 || quote(colName) == F || quote(tableName) ~ "." ~ quote(colName) == F)
 					return true;
 			}
 		}
@@ -111,7 +111,7 @@ private:
 	template sqlType(T) if(isSomeString!T) { enum sqlType = "TEXT"; }
 	template sqlType(T) if(isFloatingPoint!T) { enum sqlType = "REAL"; }
 	template sqlType(T) if(isIntegral!T || is(T == bool)) { enum sqlType = "INT"; }
-	template sqlType(T) if(is(T == void[])) { enum sqlType = "BLOB"; }
+	template sqlType(T) if(!isSomeString!T && !isScalarType!T) { enum sqlType = "BLOB"; }
 	mixin template VerifyParams(string what, ARGS...)
 	{
 		static assert(what.count("?") == A.length, "Incorrect number parameters");
@@ -190,7 +190,7 @@ public:
 	// of all fields as a tuple. Skips "rowid" fields.
 	static auto getFields(STRUCT, int n = 0)(STRUCT s, ref string []fields)
 	{
-		enum L = (Fields!STRUCT).length;
+		enum L = Fields!STRUCT.length;
 		static if(n == L)
 			return tuple();
 		else {
@@ -208,17 +208,19 @@ public:
 	static auto insert(OR OPTION = OR.None, STRUCT)(STRUCT s) if(isAggregateType!STRUCT)
 	{
 		import std.algorithm.iteration : map;
+		import std.array : replicate;
 
 		string[] fields;
 		auto t = getFields(s, fields);
-		auto qms = map!(a => "?")(fields);
-		return make!(State.Insert)("INSERT " ~ OPTION ~ "INTO " ~ quote(TableName!STRUCT) ~ "(" ~ quote(fields).join(",") ~ ") VALUES(" ~ qms.join(",") ~ ")", t);
+		auto qms = ",?".replicate(fields.length);
+		if(qms.length) qms = qms[1..$];
+		return make!(State.Insert)("INSERT " ~ OPTION ~ "INTO " ~ quote(TableName!STRUCT) ~ "(" ~ quote(fields).join(",") ~ ") VALUES(" ~ qms ~ ")", t);
 	}
 
 	///
 	unittest {
 		User u = { name : "jonas", age : 13 };
-		Message m  = { contents : "some text" };
+		Message m = { contents : "some text" };
 		assert(QueryBuilder.insert(u) == "INSERT INTO 'User'('name','age') VALUES(?,?)");
 		assert(QueryBuilder.insert(m) == "INSERT INTO 'msg'('contents') VALUES(?)");
 	}
