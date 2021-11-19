@@ -133,5 +133,5 @@ allows for usage such as;
 	db.insert(user);
 	foreach(user ; db.selectAllWhere(User, "age > ?")("30"))
 		writeln(user.name);
-	int age = db.selectOneWhere(User, "name == ?")("jake").age;
+	int age = db.selectOneWhere!(User, "name == ?")("jake").age;
 ```

@@ -20,12 +20,12 @@ import std.string : join, count;
 
 /// Get the tablename of `STRUCT`
 template TableName(alias STRUCT) {
-	enum ATTRS = getAttr!STRUCT;
-	static if(ATTRS.length > 0 && is(typeof(ATTRS[0]) == sqlname))
-		enum TableName = ATTRS[0].name;
+	static if(hasUDA!(STRUCT, sqlname))
+		enum TableName = getUDAs!(STRUCT, sqlname)[0].name;
 	else
 		enum TableName = STRUCT.stringof;
 };
+
 ///
 unittest {
 	assert(TableName!User == "User");
@@ -34,9 +34,9 @@ unittest {
 
 /// Generate a column name given a FIELD in STRUCT.
 template ColumnName(STRUCT, string FIELD) if(isAggregateType!STRUCT) {
-	enum ATTRS = __traits(getAttributes, __traits(getMember, STRUCT, FIELD));
-	static if(ATTRS.length > 0 && is(typeof(ATTRS[0]) == sqlname))
-		enum ColumnName = ATTRS[0].name;
+	alias F = __traits(getMember, STRUCT, FIELD);
+	static if(hasUDA!(F, sqlname))
+		enum ColumnName = getUDAs!(F, sqlname)[0].name;
 	else
 		enum ColumnName = FIELD;
 }
@@ -44,14 +44,14 @@ template ColumnName(STRUCT, string FIELD) if(isAggregateType!STRUCT) {
 /// Return the qualifed column name of the given struct field
 template ColumnName(alias FIELDNAME)
 {
-	enum ATTRS = getAttr!FIELDNAME;
-	static if(ATTRS.length > 0 && is(typeof(ATTRS[0]) == sqlname))
-		enum CN = ATTRS[0].name;
+	static if(hasUDA!(FIELDNAME, sqlname))
+		enum CN = getUDAs!(FIELDNAME, sqlname)[0].name;
 	else
 		enum CN = FIELDNAME.stringof;
 
 	enum ColumnName = quote(TableName!(__traits(parent, FIELDNAME))) ~ "." ~ quote(CN);
 }
+
 ///
 unittest {
 	@sqlname("msg") struct Message { @sqlname("txt") string contents; }

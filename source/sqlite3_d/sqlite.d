@@ -86,6 +86,8 @@ class SQLite3
 
 		T getArg(T)(int pos)
 		{
+			import core.stdc.string;
+
 			int typ = sqlite3_column_type(stmt, pos);
 			static if(isIntegral!T) {
 				enforce!db_exception(typ == SQLITE_INTEGER,
@@ -107,7 +109,12 @@ class SQLite3
 						"Column is not a blob");
 				auto ptr = sqlite3_column_blob(stmt, pos);
 				int size = sqlite3_column_bytes(stmt, pos);
-				return cast(T)ptr[0..size].dup;
+				static if(isStaticArray!T) {
+					T arr = void;
+					memcpy(arr.ptr, ptr, size);
+					return arr;
+				} else
+					return cast(T)ptr[0..size].dup;
 			}
 		}
 
