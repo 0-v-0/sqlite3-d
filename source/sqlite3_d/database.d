@@ -6,7 +6,7 @@ import sqlite3_d;
 version(unittest) mixin template TEST(string dbname)
 {
 	struct User {
-		string name = "";
+		string name;
 		int age;
 	};
 
@@ -37,7 +37,7 @@ class Database : SQLite3
 		bool empty() {
 			import etc.c.sqlite3;
 
-			if (query.lastCode < 0)
+			if(query.lastCode < 0)
 				query.step();
 			return query.lastCode != SQLITE_ROW;
 		}
@@ -133,7 +133,6 @@ unittest
 		int Group;
 	}
 
-	db.create!Group;
 	Group g = { 3 };
 	db.insert(g);
 	Group gg = db.selectOneWhere!(Group, `"Group"=3`);

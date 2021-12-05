@@ -84,6 +84,11 @@ class SQLite3
 				return sqlite3_bind_blob(stmt, pos, arg.ptr, cast(int)arg.length, null);
 		}
 
+		int bindArg(T)(int pos, T arg) if (is(Unqual!T == typeof(null)))
+		{
+			return sqlite3_bind_null(stmt, pos);
+		}
+
 		T getArg(T)(int pos)
 		{
 			import core.stdc.string;
@@ -97,6 +102,8 @@ class SQLite3
 				else
 					return cast(T)sqlite3_column_int(stmt, pos);
 			} else static if(isSomeString!T) {
+				if (typ == SQLITE_NULL)
+					return T.init;
 				enforce!db_exception(typ == SQLITE3_TEXT,
 						"Column is not a string");
 				return fromStringz(sqlite3_column_text(stmt, pos)).idup;
@@ -105,6 +112,8 @@ class SQLite3
 						"Column is not a real");
 				return sqlite3_column_double(stmt, pos);
 			} else {
+				if (typ == SQLITE_NULL)
+					return T.init;
 				enforce!db_exception(typ == SQLITE_BLOB,
 						"Column is not a blob");
 				auto ptr = sqlite3_column_blob(stmt, pos);

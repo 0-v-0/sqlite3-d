@@ -190,8 +190,7 @@ public:
 	// of all fields as a tuple. Skips "rowid" fields.
 	static auto getFields(STRUCT, int n = 0)(STRUCT s, ref string []fields)
 	{
-		enum L = Fields!STRUCT.length;
-		static if(n == L)
+		static if(n == Fields!STRUCT.length)
 			return tuple();
 		else {
 			enum NAME = (FieldNameTuple!STRUCT)[n],
@@ -345,12 +344,14 @@ public:
 	{
 		return make!(State.Delete)("DELETE FROM " ~ tablename);
 	}
+
+	///
+	alias del = delete_;
+
 	///
 	unittest {
-		QueryBuilder.delete_!User.where!"name=?"("greg");
+		QueryBuilder.del!User.where!"name=?"("greg");
 	}
-
-	alias del = delete_;
 }
 
 ///
