@@ -1,11 +1,11 @@
 module sqlite3_d.sqlite;
 
-import std.typecons : RefCounted, tuple, Tuple;
-import std.traits;
-import std.string;
 import std.conv : to;
-import etc.c.sqlite3;
 import std.exception : enforce;
+import std.string;
+import std.traits;
+import std.typecons : RefCounted, tuple, Tuple;
+import etc.c.sqlite3;
 import sqlite3_d.utils;
 
 pragma(lib, "sqlite3");
@@ -127,11 +127,6 @@ class SQLite3
 			}
 		}
 
-		void getArg(T)(int pos, ref T t)
-		{
-			t = getArg!T(pos);
-		}
-
 	public:
 		/// Bind these args in order to '?' marks in statement
 		void bind(ARGS...)(ARGS args)
@@ -148,7 +143,8 @@ class SQLite3
 			import core.stdc.string : strcmp;
 
 			auto zname = name.toz;
-			for(int i=0; i<sqlite3_column_count(stmt); i++) {
+			int count = sqlite3_column_count(stmt);
+			for(int i = 0; i < count; i++) {
 				if(strcmp(sqlite3_column_name(stmt, i), zname) == 0)
 					return i;
 			}
@@ -169,13 +165,14 @@ class SQLite3
 			if(lastCode == -1)
 				step();
 			T t;
-			foreach(N; FieldNameTuple!T) {
-				enum ATTRS = __traits(getAttributes, __traits(getMember, T, N));
-				static if(ATTRS.length > 0 && is(typeof(ATTRS[0]) == sqlname))
-					enum colName = ATTRS[0].name;
+			int i = void;
+			static foreach(N; FieldNameTuple!T) {
+				static if(hasUDA!(__traits(getMember, T, N), as))
+					i = findColumn(getUDAs!(__traits(getMember, T, N), as)[0].name);
 				else
-					enum colName = N;
-				getArg(findColumn(colName), __traits(getMember, t, N));
+					i = findColumn(N);
+				if(i >= 0)
+					__traits(getMember, t, N) = getArg!(typeof(__traits(getMember, t, N)))(i);
 			}
 			return t;
 		}
@@ -183,7 +180,7 @@ class SQLite3
 		/// Get current row as a tuple
 		Tuple!T get(T...)()
 		{
-			Tuple!T t;
+			Tuple!T t = void;
 			foreach(I, Ti; T)
 				t[I] = get!(Ti, I)();
 			return t;
@@ -288,7 +285,7 @@ class SQLite3
 
 	///
 	unittest {
-		mixin TEST!("exec");
+		mixin TEST!"exec";
 		assert(db.exec("CREATE TABLE Test(name STRING)"));
 		assert(db.exec("INSERT INTO Test VALUES (?)", "hey"));
 	}
@@ -302,7 +299,7 @@ class SQLite3
 
 	///
 	unittest {
-		mixin TEST!("hastable");
+		mixin TEST!"hastable";
 		assert(!db.hasTable("MyTable"));
 		db.exec("CREATE TABLE MyTable(id INT)");
 		assert(db.hasTable("MyTable"));
@@ -313,7 +310,7 @@ class SQLite3
 
 	///
 	unittest {
-		mixin TEST!("lastrowid");
+		mixin TEST!"lastrowid";
 		assert(db.exec("CREATE TABLE MyTable(name STRING)"));
 		assert(db.exec("INSERT INTO MyTable VALUES (?)", "hey"));
 		assert(db.lastRowid == 1);

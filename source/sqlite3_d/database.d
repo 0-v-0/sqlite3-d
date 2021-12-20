@@ -3,7 +3,7 @@ module sqlite3_d.database;
 import sqlite3_d;
 
 /// Setup code for tests
-version(unittest) mixin template TEST(string dbname)
+version(unittest) template TEST(string dbname)
 {
 	struct User {
 		string name;
@@ -11,7 +11,7 @@ version(unittest) mixin template TEST(string dbname)
 	};
 
 	struct Message {
-		@sqlname("rowid") int id;
+		@as("rowid") int id;
 		string content;
 		int byUser;
 	};
@@ -27,7 +27,7 @@ class Database : SQLite3
 {
 	bool autoCreateTable = true;
 
-	alias QB = QueryBuilder!();
+	alias QB = SQLBuilder!();
 	// Returned from select-type methods where the row type is known
 	struct QueryIterator(T)
 	{
@@ -77,7 +77,7 @@ class Database : SQLite3
 	}
 
 	unittest {
-		mixin TEST!("select");
+		mixin TEST!"select";
 		import std.array : array;
 		import std.algorithm.iteration : fold;
 
@@ -104,7 +104,7 @@ class Database : SQLite3
 			try {
 				q = Query(db, qb);
 			} catch(db_exception e) {
-				if(hasTable(TableName!T))
+				if(hasTable(SQLName!T))
 					return false;
 				create!T;
 				q = Query(db, qb);
@@ -112,12 +112,12 @@ class Database : SQLite3
 		} else
 			q = Query(db, qb);
 
-		q.bind(qb.binds.expand);
+		q.bind(qb.args);
 		return q.step();
 	}
 
 	unittest {
-		mixin TEST!("insert");
+		mixin TEST!"insert";
 		User user = { "jonas", 45 };
 		db.insert(user);
 		assert(db.query("select name from User where age = 45").step());

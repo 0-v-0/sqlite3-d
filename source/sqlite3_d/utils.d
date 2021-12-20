@@ -1,15 +1,22 @@
 module sqlite3_d.utils;
 
-import std.string;
+import
+	std.array,
+	std.meta,
+	std.string,
+	std.traits;
+import std.uni : isWhite;
 
-struct sqlname { string name; }
+struct as { string name; }
 struct sqlkey { string key; }
 struct sqltype { string type; }
 
 package:
 
-alias getAttr(T...) = __traits(getAttributes, T);
-alias toz = toStringz;
+alias
+	getAttr(T...) = __traits(getAttributes, T),
+	toz = toStringz;
+
 auto toStr(T)(T ptr) {
 	return fromStringz(ptr).idup;
 }
@@ -25,40 +32,33 @@ bool tryRemove(string name) {
 	return true;
 }
 
-
-string quote(string s, string q = "'") pure nothrow 
-{
+S quote(S)(S s, S q = "'") pure nothrow if (isSomeString!S) {
 	return q ~ s ~ q;
 }
 
-string[] quote(string[] s, string q = "'") pure nothrow 
-{
-	string[] res;
-	foreach(t ; s)
-		res ~= q ~ t ~ q;
-	return res;
+S quoteJoin(S, bool leaveTail = false)(S[] s, S sep = ",", S q = "'") pure nothrow if (isSomeString!S) {
+	auto res = appender!(S);
+	for(size_t i; i < s.length; i++) {
+		res ~= q;
+		res ~= s[i];
+		res ~= q;
+		if (leaveTail || i+1 < s.length)
+			res ~= sep;
+	}
+	return res[];
 }
 
-import std.traits;
-
-@property:
-
-bool allString(STRING...)() {
-	bool ok = true;
-	foreach(S ; STRING)
-		static if(is(S))
-		ok = false;
-	else
-		ok &= isSomeString!(typeof(S));
-	return ok;
+template startsWithWhite(alias S) {
+	static if(is(typeof(S) : string))
+		static if(S.length)
+			static if(S[0].isWhite)
+				enum startsWithWhite = true;
+	static if(!is(typeof(startsWithWhite) == bool))
+		enum startsWithWhite = false;
 }
 
-bool allAggregate(ARGS...)() {
-	bool ok = true;
-	foreach(A ; ARGS)
-		static if(is(A))
-		ok &= isAggregateType!A;
-	else
-		ok = false;
-	return ok;
-}
+enum
+	allString(T...) = allSatisfy!(isSomeString, T),
+	allAggregate(T...) = allSatisfy!(isAggregateType, T);
+
+alias CutOut(size_t I, T...) = AliasSeq!(T[0..I], T[I+1..$]);
