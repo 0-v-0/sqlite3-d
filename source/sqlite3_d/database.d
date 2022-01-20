@@ -1,6 +1,8 @@
 module sqlite3_d.database;
 
-import sqlite3_d;
+import 
+	etc.c.sqlite3,
+	sqlite3_d;
 
 /// Setup code for tests
 version(unittest) template TEST(string dbname)
@@ -22,53 +24,62 @@ version(unittest) template TEST(string dbname)
 	}();
 }
 
+// Returned from select-type methods where the row type is known
+struct QueryIterator(T)
+{
+	Query query;
+	this(Query q) { query = q; }
+
+	bool empty() {
+		import etc.c.sqlite3;
+
+		if(query.lastCode < 0)
+			query.step();
+		return query.lastCode != SQLITE_ROW;
+	}
+	void popFront() { query.step(); }
+	T front() { return query.get!T; }
+}
+
+unittest {
+	QueryIterator!int qi;
+	assert(qi.empty());
+}
 /// An Database with query building capabilities
 class Database : SQLite3
 {
 	bool autoCreateTable = true;
 
-	alias QB = SQLBuilder!();
-	// Returned from select-type methods where the row type is known
-	struct QueryIterator(T)
-	{
-		Query query;
-		this(Query q) { query = q; }
-
-		bool empty() {
-			import etc.c.sqlite3;
-
-			if(query.lastCode < 0)
-				query.step();
-			return query.lastCode != SQLITE_ROW;
-		}
-		void popFront() { query.step(); }
-		T front() { return query.get!T; }
-	}
-
-	unittest {
-		QueryIterator!int qi;
-		assert(qi.empty());
-	}
+	alias SQLBuilder SB;
 
 	this(string name) { super(name); }
 
 	bool create(T)()
 	{
-		return Query(db, QB.create!T).step();
+		auto q = Query(db, SB.create!T);
+		q.step();
+		return q.lastCode == SQLITE_DONE;
 	}
 
 	QueryIterator!T selectAllWhere(T, string WHERE, ARGS...)(ARGS args)
 	{
-		auto q = Query(db, QB.selectAllFrom!T.where!WHERE(args), args);
+		auto q = Query(db, SB.selectAllFrom!T.where(WHERE), args);
 		return QueryIterator!T(q);
 	}
 
 	T selectOneWhere(T, string WHERE, ARGS...)(ARGS args)
 	{
-		auto q = Query(db, QB.selectAllFrom!T.where!WHERE(args), args);
+		auto q = Query(db, SB.selectAllFrom!T.where(WHERE), args);
 		if(q.step())
 			return q.get!T;
-		throw new db_exception("No match");
+		throw new SQLiteException("No match");
+	}
+
+	T selectOneWhere(T, string WHERE, T defValue = T.init, ARGS...)(ARGS args) {
+		auto q = Query(db, SB.selectAllFrom!T.where(WHERE), args);
+		if (q.step())
+			return q.get!T;
+		return defValue;
 	}
 
 	T selectRow(T)(ulong row)
@@ -87,7 +98,7 @@ class Database : SQLite3
 		db.insert(User("emma", 12));
 		db.insert(User("maria", 27));
 
-		User[] users = array(db.selectAllWhere!(User, "age > ?")(20));
+		auto users = db.selectAllWhere!(User, "age > ?")(20).array;
 		auto total = fold!((a,b) => User("", a.age + b.age))(users);
 
 		assert(total.age == 55 + 91 + 27);
@@ -96,30 +107,20 @@ class Database : SQLite3
 
 	};
 
-	bool insert(OR OPTION = OR.None, T)(T row)
-	{
-		auto qb = QB.insert!OPTION(row);
-		Query q;
-		if(autoCreateTable) {
-			try {
-				q = Query(db, qb);
-			} catch(db_exception e) {
-				if(hasTable(SQLName!T))
-					return false;
-				create!T;
-				q = Query(db, qb);
-			}
-		} else
-			q = Query(db, qb);
-
-		q.bind(qb.args);
-		return q.step();
+	int insert(OR OPTION = OR.None, T)(T row) {
+		if(autoCreateTable && !hasTable(SQLName!T)) {
+			if(!create!T)
+				return false;
+		}
+		auto q = Query.insert!OPTION(db, row);
+		q.step();
+		return q.changes;
 	}
 
 	unittest {
 		mixin TEST!"insert";
 		User user = { "jonas", 45 };
-		db.insert(user);
+		assert(db.insert(user));
 		assert(db.query("select name from User where age = 45").step());
 		assert(!db.query("select age from User where name = 'xxx'").step());
 	};

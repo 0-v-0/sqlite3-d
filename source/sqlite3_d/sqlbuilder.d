@@ -1,6 +1,11 @@
 module sqlite3_d.sqlbuilder;
 
-import sqlite3_d.utils;
+import
+	sqlite3_d.utils,
+	std.exception,
+	std.meta,
+	std.range;
+import std.string : join, count;
 
 version(unittest) package {
 	struct User {
@@ -13,17 +18,15 @@ version(unittest) package {
 		string contents;
 	}
 }
-import
-	std.meta,
-	std.range,
-	std.traits;
-import std.typecons : tuple;
-import std.string : join, count;
 
-/// Get the sqlname of `STRUCT`
-template SQLName(alias STRUCT, string defaultName = STRUCT.stringof) {
-	static if(hasUDA!(STRUCT, as))
-		enum SQLName = getUDAs!(STRUCT, as)[0].name;
+/// Get the sqlname of `T`
+template SQLName(alias T, string defaultName = T.stringof) {
+	static if(hasUDA!(T, ignore))
+		enum SQLName = "";
+	else static if(hasUDA!(T, as))
+		enum SQLName = getUDAs!(T, as)[0].name;
+	else static if(hasUDA!(T, uncamel))
+		enum SQLName = unCamelCase(defaultName);
 	else
 		enum SQLName = defaultName;
 };
@@ -34,9 +37,9 @@ unittest {
 	assert(SQLName!Message == "msg");
 }
 
-/// Generate a column name given a FIELD in STRUCT.
-template ColumnName(STRUCT, string FIELD) if(isAggregateType!STRUCT) {
-	enum ColumnName = SQLName!(__traits(getMember, STRUCT, FIELD), FIELD);
+/// Generate a column name given a FIELD in T.
+template ColumnName(T, string FIELD) if(isAggregateType!T) {
+	enum ColumnName = SQLName!(__traits(getMember, T, FIELD), FIELD);
 }
 
 /// Return the qualifed column name of the given struct field
@@ -54,15 +57,15 @@ unittest {
 	assert(ColumnName!(User.age) == "'User'.'age'");
 }
 
-template ColumnNames(STRUCT) {
-	enum colName(string NAME) = ColumnName!(STRUCT, NAME);
-	enum ColumnNames = staticMap!(colName, FieldNameTuple!STRUCT);
+template ColumnNames(T) {
+	enum colName(string NAME) = ColumnName!(T, NAME);
+	enum ColumnNames = staticMap!(colName, FieldNameTuple!T);
 }
 
 /// get column count except "rowid" field
-template ColumnCount(STRUCT) {
+template ColumnCount(T) {
 	enum
-		colNames = ColumnNames!STRUCT,
+		colNames = ColumnNames!T,
 		indexOfRowid = staticIndexOf!("rowid", colNames);
 	static if(indexOfRowid >= 0)
 		enum ColumnCount = colNames.length - 1;
@@ -70,42 +73,55 @@ template ColumnCount(STRUCT) {
 		enum ColumnCount = colNames.length;
 }
 
-template sqlType(T) if(isSomeString!T) { enum sqlType = "TEXT"; }
-template sqlType(T) if(isFloatingPoint!T) { enum sqlType = "REAL"; }
-template sqlType(T) if(isIntegral!T || is(T == bool)) { enum sqlType = "INT"; }
-template sqlType(T) if(!isSomeString!T && !isScalarType!T) { enum sqlType = "BLOB"; }
+template SQLTypeOf(T) {
+	static if(isSomeString!T)
+		enum SQLTypeOf = "TEXT";
+	else static if(isFloatingPoint!T)
+		enum SQLTypeOf = "REAL";
+	else static if(isIntegral!T || is(T == bool))
+		enum SQLTypeOf = "INT";
+	else static if(!isSomeString!T && !isScalarType!T)
+		enum SQLTypeOf = "BLOB";
+	else static assert(0, "Unsupported SQLType '" ~ T.stringof ~ "'");
+}
 
-bool checkField(string F, TABLES...)() {
+bool checkField(TABLES...)(string field) {
 	foreach (TABLE; TABLES) {
 		enum tblName = SQLName!TABLE;
 		foreach (N; FieldNameTuple!TABLE) {
 			enum colName = ColumnName!(TABLE, N);
-			if (colName == F || tblName ~ "." ~ colName == F ||
-				colName.quote == F ||
-				tblName.quote ~ "." ~ colName.quote == F)
+			if (colName == field || tblName ~ "." ~ colName == field ||
+				colName.quote == field ||
+				tblName.quote ~ "." ~ colName.quote == field)
 				return true;
 		}
 	}
 	return false;
 }
 
-template checkFields(string[] FIELDS, TABLES...)
-{
-	enum check(string F) = checkField!(F, TABLES);
-	enum checkFields = allSatisfy!(check, aliasSeqOf!FIELDS);
+bool checkFields(TABLES...)(string[] fields) {
+	foreach (field; fields)
+		if(!checkField!TABLES(field))
+			return false;
+	return true;
 }
 
 enum State {
-	None = "",
-	Create = "CREATE TABLE ",
-	CreateIfNE = "CREATE TABLE IF NOT EXISTS ",
-	Delete = "DELETE FROM ",
-	From = " FROM ",
-	Insert = "INSERT ",
-	Select = "SELECT ",
-	Set = " SET ",
-	Update = "UPDATE ",
-	Where = " WHERE ",
+	none = "",
+	create = "CREATE TABLE ",
+	createIfNE = "CREATE TABLE IF NOT EXISTS ",
+	del = "DELETE FROM ",
+	from = " FROM ",
+	groupBy = " GROUP BY ",
+	having = " HAVING ",
+	insert = "INSERT ",
+	limit = " LIMIT ",
+	offset = " OFFSET ",
+	orderBy = " ORDER BY ",
+	select = "SELECT ",
+	set = " SET ",
+	update = "UPDATE ",
+	where = " WHERE "
 }
 
 enum OR {
@@ -117,79 +133,60 @@ enum OR {
 	Rollback = "OR ROLLBACK "
 }
 
-/** An instance of a query building process */
-struct SQLBuilder(State STATE = State.None, ARGS...)
-{
-	static if(STATE == State.Select)
-		alias Selects = Alias!(ARGS[0]),
-			Args = AliasSeq!();
-	else
-		alias ARGS Args;
+template Clause(string name, string[] prevStates) if(prevStates.length) {
+	import std.uni;
 
-	Args args;
+	mixin("SB ", name, "(S)(S expr) if(isSomeString!S)
+		in(state == State.", prevStates.join(" || state == State."), ") {
+		sql ~= (state = State.", name, ") ~ expr;
+		return this;}");
+}
+
+/** An instance of a query building process */
+struct SQLBuilder
+{
 	string sql;
 	alias sql this;
+	State state;
 private:
 
-	alias SB(T...) = SQLBuilder!T;
+	alias SQLBuilder SB;
 
-	static auto make(State STATE, string prefix, string suffix, STRUCT, Args...)(STRUCT s)
-	if(isAggregateType!STRUCT) {
-		enum
-			colNames = ColumnNames!STRUCT,
-			I = staticIndexOf!("rowid", colNames),
-			sql(alias s) = prefix ~ s.quoteJoin(suffix == "=?" ? "=?," : ",")
-				~ suffix;
-		// Skips "rowid" field
-		static if(I >= 0) {
-			enum sqlFields = [CutOut!(I, colNames)];
-			return SQLBuilder!(STATE, CutOut!(I, Fields!STRUCT))(sql!sqlFields,
-					s.tupleof[0..I], s.tupleof[I+1..$]);
-		} else {
-			enum sqlFields = [colNames];
-			return SQLBuilder!(STATE, Fields!STRUCT)(sql!sqlFields, s.tupleof);
-		}
-	}
-
-	template VerifyParams(alias what, ARGS...) {
-		static assert(what.count('?') == ARGS.length, "Incorrect number parameters");
+	template make(string prefix, string suffix, T) if(isAggregateType!T) {
+		mixin getSQLFields!(prefix, suffix, T);
+		enum make = sql!sqlFields;
 	}
 public:
 
-	this(string sql, Args args) {
-		static if(startsWithWhite!STATE)
-			this.sql = sql;
-		else
-			this.sql = STATE ~ sql;
-		static if(STATE != State.Select)
-			this.args = args;
+	this(string sql, State STATE = State.none) {
+		this.sql = STATE.startsWithWhite ? sql : STATE ~ sql;
+		state = STATE;
 	}
 
-	static auto create(STRUCT)() if(isAggregateType!STRUCT)
+	static SB create(T)() if(isAggregateType!T)
 	{
-		enum SATTRS = getAttr!STRUCT;
+		import std.conv : to;
+
 		string s;
-		static foreach(A; SATTRS)
+		static foreach(A; __traits(getAttributes, T))
 			static if(isSomeString!(typeof(A)))
 				static if(A.length) {
-					static if(startsWithWhite!A)
+					static if(A.startsWithWhite)
 						s ~= A;
 					else
 						s ~= " " ~ A;
 				}
-		alias FIELDS = Fields!STRUCT;
+		alias FIELDS = Fields!T;
 		string[] fields, keys, pkeys;
 
-		foreach(I, N; FieldNameTuple!STRUCT) {
-			enum ATTRS = __traits(getAttributes, __traits(getMember, STRUCT, N)),
-				colName = ColumnName!(STRUCT, N);
-
+		static foreach(I, colName; ColumnNames!T)
+		static if(colName.length) {{
 			static if(colName != "rowid") {
 				string field = quote(colName) ~ " ",
-					   type = sqlType!(FIELDS[I]),
+					   type = SQLTypeOf!(FIELDS[I]),
 					   constraints;
 			}
-			static foreach(A; ATTRS)
+			static foreach(A; __traits(getAttributes, T.tupleof[I]))
 				static if(is(typeof(A) == sqlkey)) {
 					static if(A.key.length)
 						keys ~= "FOREIGN KEY(" ~ colName ~ ") REFERENCES " ~ A.key;
@@ -199,27 +196,25 @@ public:
 					type = A.type;
 				else static if(isSomeString!(typeof(A))) {
 					static if(A.length) {
-						static if(startsWithWhite!A)
+						static if(A.startsWithWhite)
 							constraints ~= A;
 						else
 							constraints ~= " " ~ A;
 					}
 				}
 			static if(colName != "rowid") {
-				import std.conv : to;
-
 				field ~= type ~ constraints;
-				enum MEMBER = __traits(getMember, STRUCT.init, N);
+				enum MEMBER = T.init.tupleof[I];
 				if(MEMBER != FIELDS[I].init)
 					field ~= " default " ~ quote(MEMBER.to!string);
 				fields ~= field;
 			}
-		}
+		}}
 		if(pkeys)
 			keys ~= "PRIMARY KEY(" ~ pkeys.join(',') ~ ")";
 
-		return SB!(State.CreateIfNE)(quote(SQLName!STRUCT) ~
-				"(" ~ join(fields ~ keys, ',') ~ ")" ~ s);
+		return SB(quote(SQLName!T) ~ "(" ~ join(fields ~ keys, ',') ~ ")"
+				~ s, State.createIfNE);
 	}
 
 	///
@@ -228,28 +223,28 @@ public:
 		assert(!__traits(compiles, SQLBuilder().create!int));
 	}
 
-	static auto insert(OR OPTION = OR.None, STRUCT)(STRUCT s) if(isAggregateType!STRUCT)
+	alias insert(T) = insert!(OR.None, T);
+
+	static SB insert(OR OPTION = OR.None, T)() if(isAggregateType!T)
 	{
 		import std.array : replicate;
 
-		enum qms = ",?".replicate(ColumnCount!STRUCT);
-		return make!(State.Insert, OPTION ~ "INTO " ~
-			quote(SQLName!STRUCT) ~ "(", ") VALUES(" ~
-				(qms.length ? qms[1..$] : qms) ~ ")")(s);
+		enum qms = ",?".replicate(ColumnCount!T);
+		return SQLBuilder(make!(OPTION ~ "INTO " ~
+			quote(SQLName!T) ~ "(", ") VALUES(" ~
+				(qms.length ? qms[1..$] : qms) ~ ")", T), State.insert);
 	}
 
 	///
 	unittest {
-		User u = { name: "jonas", age: 13 };
-		Message m = { contents : "some text" };
-		assert(SQLBuilder.insert(u) == "INSERT INTO 'User'('name','age') VALUES(?,?)");
-		assert(SQLBuilder.insert(m) == "INSERT INTO 'msg'('contents') VALUES(?)");
+		assert(SQLBuilder.insert!User == "INSERT INTO 'User'('name','age') VALUES(?,?)");
+		assert(SQLBuilder.insert!Message == "INSERT INTO 'msg'('contents') VALUES(?)");
 	}
 
 	///
-	static auto select(STRING...)() if (STRING.length)
+	static SB select(STRING...)() if (STRING.length)
 	{
-		return SB!(State.Select, STRING)([STRING].join(','));
+		return SB([STRING].join(','), State.select);
 	}
 	///
 	unittest {
@@ -258,17 +253,18 @@ public:
 	}
 
 	///
-	static auto selectAllFrom(STRUCTS...)()
+	static SB selectAllFrom(STRUCTS...)()
 	{
 		string[] fields, tables;
-		static foreach(I, Ti; STRUCTS) {
-			static foreach(N; FieldNameTuple!Ti)
-				fields ~= quote(SQLName!Ti) ~ "." ~ quote(ColumnName!(Ti, N));
+		static foreach(I, S; STRUCTS) {{
+			enum tblName = SQLName!S;
+			static foreach(N; FieldNameTuple!S)
+				fields ~= tblName.quote ~ "." ~ ColumnName!(S, N).quote;
 
-			tables ~= SQLName!Ti;
-		}
-		auto sql = "SELECT " ~ fields.join(',') ~ " FROM " ~ tables.quoteJoin(",");
-		return SB!(State.From)(sql);
+			tables ~= tblName;
+		}}
+		return SB("SELECT " ~ fields.join(',') ~ " FROM "
+			~ tables.quoteJoin(","), State.from);
 	}
 	///
 	unittest {
@@ -277,80 +273,59 @@ public:
 	}
 
 	///
-	auto from(S)(S tables) if(STATE == State.Select && isSomeString!S)
-	{
-		sql ~= " FROM " ~ tables;
-
-		return SB!(State.From, Args)(sql, args);
+	SB from(S)(S tables) if(isSomeString!S)
+	in(state == State.select) {
+		sql ~= (state = State.from) ~ tables;
+		return this;
 	}
 
 	///
-	auto from(Strings...)(Strings tables) if(STATE == State.Select && allString!Strings)
-	{
+	SB from(Strings...)(Strings tables)
+	if(Strings.length > 1 && allSatisfy!(isSomeString, T)) {
 		return from([tables].join(','));
 	}
 
 	///
-	auto from(TABLES...)() if(STATE == State.Select && allAggregate!TABLES)
-	{
-		static assert(checkFields!([Selects], TABLES), "Not all selected fields match column names");
-		string[] tables;
-		foreach(T; TABLES)
-			tables ~= SQLName!T;
-		return from(tables.quoteJoin(","));
+	SB from(TABLES...)()
+	if(TABLES.length && allSatisfy!(isAggregateType, TABLES))
+	in(checkFields!TABLES(sql[State.select.length..$].split(',')),
+		"Not all selected fields match column names") {
+		return from([staticMap!(SQLName, TABLES)].quoteJoin(","));
 	}
 
 	///
-	auto set(string what, A...)(A a) if(STATE == State.Update)
+	mixin Clause!("set", ["update"]);
+
+	///
+	static SB update(OR OPTION = OR.None, S)(S table) if(isSomeString!S)
 	{
-		mixin VerifyParams!(what, A);
-		return SB!(State.Set)(sql ~ " SET " ~ what, a);
-	}
-
-	static {
-		///
-		auto update(OR OPTION = OR.None, S)(S table) if(isSomeString!S)
-		{
-			return SB!(State.Update)(OPTION ~ table);
-		}
-
-		///
-		auto update(OR OPTION = OR.None, STRUCT)(STRUCT s) if(isAggregateType!STRUCT)
-		{
-			return make!(State.Set, "UPDATE " ~ OPTION ~ SQLName!STRUCT ~
-				" SET ", "=?")(s);
-		}
+		return SB(OPTION ~ table, State.update);
 	}
 
 	///
-	alias update(OR OPTION = OR.None, STRUCT) = update(SQLName!STRUCT);
+	static SB update(T, OR OPTION = OR.None)() if(isAggregateType!T) {
+		return update(SQLName!T);
+	}
 
 	///
 	unittest {
-		User user = { name: "Jonas", age: 34 };
-		assert(SQLBuilder.update(user) == "UPDATE User SET 'name'=?,'age'=?");
 		assert(SQLBuilder.update("User") == "UPDATE User");
-		//assert(SQLBuilder.update!User == "UPDATE User");
+		assert(SQLBuilder.update!User == "UPDATE User");
 	}
 
 	///
-	auto where(string what, A...)(A args) if(STATE == State.Set ||
-		STATE == State.From || STATE == State.Delete)
-	{
-		mixin VerifyParams!(what, A);
-		return SB!(State.Where, Args, A)(sql ~ " WHERE " ~ what, AliasSeq!(this.args, args));
-	}
+	mixin Clause!("where", ["set", "from", "del"]);
 
 	///
-	static auto del(TABLE)() if(isAggregateType!TABLE)
+	static SB del(TABLE)() if(isAggregateType!TABLE)
 	{
 		return del(SQLName!TABLE);
 	}
 
 	///
-	static auto del(S)(S tablename) if(isSomeString!S)
+	static SB del(S)(S tablename) if(isSomeString!S)
 	{
-		return SB!(State.Delete)(tablename);
+		return SB(tablename, State.del);
 	}
 
 	///
@@ -358,10 +333,25 @@ public:
 
 	///
 	unittest {
-		SQLBuilder.del!User.where!"name=?"("greg");
+		SQLBuilder.del!User.where("name=?");
 	}
 
-	auto opCall(S)(S expr) if(isSomeString!S) {
+	///
+	mixin Clause!("groupBy", ["from", "where"]);
+
+	///
+	mixin Clause!("having", ["from", "where", "groupBy"]);
+
+	///
+	mixin Clause!("orderBy", ["from", "where", "groupBy", "having"]);
+
+	///
+	mixin Clause!("limit", ["from", "where", "groupBy", "having", "orderBy"]);
+
+	///
+	mixin Clause!("offset", ["limit"]);
+
+	SB opCall(S)(S expr) if(isSomeString!S) {
 		sql ~= expr;
 		return this;
 	}
@@ -375,17 +365,16 @@ unittest
 		string name;
 		int age;
 	}
-	alias Q = SQLBuilder!(),
+	alias Q = SQLBuilder,
 		  C = ColumnName;
 
 	assert(Q.create!User == "CREATE TABLE IF NOT EXISTS 'User'('name' TEXT,'age' INT)");
 
-	auto qb0 = Q.select!"name".from!User.where!"age=?"(12);
+	auto qb0 = Q.select!"name".from!User.where("age=?");
 
 	// The properties `sql` and `bind` can be used to access the generated sql and the
 	// bound parameters
 	assert(qb0.sql == "SELECT name FROM 'User' WHERE age=?");
-	assert(qb0.args == AliasSeq!12);
 
 	/// We can decorate structs and fields to give them different names in the database.
 	@as("msg") struct Message {
@@ -399,24 +388,23 @@ unittest
 	assert(Q.create!Message == "CREATE TABLE IF NOT EXISTS 'msg'('contents' TEXT)");
 
 	Message m = { id : -1 /* Ignored */, contents : "Some message" };
-	auto qb = Q.insert(m);
+	auto qb = Q.insert!Message;
 	assert(qb.sql == "INSERT INTO 'msg'('contents') VALUES(?)");
-	assert(qb.args == AliasSeq!"Some message");
 }
 
 unittest
 {
 	import std.algorithm.iteration : uniq;
 	import std.algorithm.searching : count;
-	alias Q = SQLBuilder!(),
+	alias Q = SQLBuilder,
 		  C = ColumnName;
 
 	// Make sure all these generate the same sql statement
 	auto sql = [
-		Q.select!("'msg'.'rowid'", "'msg'.'contents'").from("'msg'").where!"'msg'.'rowid'=?"(1).sql,
-		Q.select!("'msg'.'rowid'", "'msg'.'contents'").from!Message.where!(C!(Message.id) ~ "=?")(1).sql,
-		Q.select!(C!(Message.id), C!(Message.contents)).from!Message.where!"'msg'.'rowid'=?"(1).sql,
-		Q.selectAllFrom!Message.where!"'msg'.'rowid'=?"(1).sql
+		Q.select!("'msg'.'rowid'", "'msg'.'contents'").from("'msg'").where("'msg'.'rowid'=?").sql,
+		Q.select!("'msg'.'rowid'", "'msg'.'contents'").from!Message.where(C!(Message.id) ~ "=?").sql,
+		Q.select!(C!(Message.id), C!(Message.contents)).from!Message.where("'msg'.'rowid'=?").sql,
+		Q.selectAllFrom!Message.where("'msg'.'rowid'=?").sql
 	];
 	assert(count(uniq(sql)) == 1);
 }
