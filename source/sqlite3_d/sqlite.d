@@ -362,7 +362,7 @@ class SQLite3
 	/// Create query from string and args to bind
 	auto query(ARGS...)(string sql, ARGS args)
 	{
-		return Query(Statement(db, sql, args));
+		return Query(db, sql, args);
 	}
 
 	alias prepare = query;
@@ -379,20 +379,14 @@ class SQLite3
 		}
 	}
 
-	auto insert(OR OPTION = OR.None, T)(T s)
+	auto insert(OR or = OR.None, T)(T s)
 	if(isAggregateType!T) {
 		import std.array : replicate;
 
 		enum qms = ",?".replicate(ColumnCount!T);
-		return make!(State.insert, OPTION ~ "INTO " ~
+		return make!(State.insert, or ~ "INTO " ~
 			quote(SQLName!T) ~ '(', ") VALUES(" ~
 				(qms.length ? qms[1..$] : qms) ~ ')')(s);
-	}
-
-	///
-	auto update(OR OPTION = OR.None, T)(T s) if(isAggregateType!T) {
-		return make!(State.set, "UPDATE " ~ OPTION ~ SQLName!T ~
-			" SET ", "=?")(s);
 	}
 
 	bool commit() { return exec("commit"); }
@@ -401,15 +395,15 @@ class SQLite3
 
 	unittest {
 		mixin TEST;
-		db.begin();
+		assert(db.begin());
 		assert(db.exec("CREATE TABLE MyTable(name TEXT)"));
 		assert(db.exec("INSERT INTO MyTable VALUES (?)", "hey"));
-		db.rollback();
+		assert(db.rollback());
 		assert(!db.hasTable("MyTable"));
-		db.begin();
+		assert(db.begin());
 		assert(db.exec("CREATE TABLE MyTable(name TEXT)"));
 		assert(db.exec("INSERT INTO MyTable VALUES (?)", "hey"));
-		db.commit();
+		assert(db.commit());
 		assert(db.hasTable("MyTable"));
 	}
 

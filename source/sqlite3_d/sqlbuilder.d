@@ -224,12 +224,12 @@ public:
 
 	alias insert(T) = insert!(OR.None, T);
 
-	static SB insert(OR OPTION = OR.None, T)() if(isAggregateType!T)
+	static SB insert(OR or = OR.None, T)() if(isAggregateType!T)
 	{
 		import std.array : replicate;
 
 		enum qms = ",?".replicate(ColumnCount!T);
-		return SQLBuilder(make!(OPTION ~ "INTO " ~
+		return SQLBuilder(make!(or ~ "INTO " ~
 			quote(SQLName!T) ~ '(', ") VALUES(" ~
 				(qms.length ? qms[1..$] : qms) ~ ')', T), State.insert);
 	}
@@ -292,20 +292,21 @@ public:
 	mixin(Clause!("set", "update"));
 
 	///
-	static SB update(OR OPTION = OR.None, S)(S table) if(isSomeString!S)
+	static SB update(OR or = OR.None, S)(S table) if(isSomeString!S)
 	{
-		return SB(OPTION ~ table, State.update);
+		return SB(or ~ table, State.update);
 	}
 
 	///
-	static SB update(T, OR OPTION = OR.None)() if(isAggregateType!T) {
-		return update(SQLName!T);
+	static SB update(T, OR or = OR.None)() if(isAggregateType!T) {
+		return SQLBuilder(make!("UPDATE " ~ or ~ SQLName!T ~
+			" SET ", "=?", T), State.set);
 	}
 
 	///
 	unittest {
 		assert(SQLBuilder.update("User") == "UPDATE User");
-		assert(SQLBuilder.update!User == "UPDATE User");
+		assert(SQLBuilder.update!User == "UPDATE User SET 'name'=?,'age'=?");
 	}
 
 	///

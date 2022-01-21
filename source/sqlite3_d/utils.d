@@ -5,7 +5,6 @@ import
 	std.ascii,
 	std.meta,
 	std.string;
-import std.uni : isWhite;
 package import std.traits;
 
 enum {
@@ -112,9 +111,9 @@ template getSQLFields(string prefix, string suffix, T) {
 }
 
 template ExceptionThis() {
-	this(string msg, string file = __FILE__, size_t line = __LINE__) { super(msg, file, line); }
-	this(Throwable causedBy, string f = __FILE__, size_t l = __LINE__) { super(causedBy.msg, causedBy, f, l); }
-	this(string msg, Throwable causedBy, string f = __FILE__, size_t l = __LINE__) { super(causedBy.msg, causedBy, f, l); }
+	this(string msg, string file = __FILE__, size_t line = __LINE__) pure { super(msg, file, line); }
+	this(Throwable causedBy, string f = __FILE__, size_t l = __LINE__) pure { super(causedBy.msg, causedBy, f, l); }
+	this(string msg, Throwable causedBy, string f = __FILE__, size_t l = __LINE__) pure { super(causedBy.msg, causedBy, f, l); }
 }
 
 alias

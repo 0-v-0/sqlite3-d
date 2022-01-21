@@ -99,25 +99,16 @@ class Database : SQLite3
 		assert(total.age == 55 + 91 + 27);
 		assert(db.selectOneWhere!(User, "age == ?")(27).name == "maria");
 		assert(db.selectRow!User(2).age == 91);
-
 	};
 
-	int insert(OR OPTION = OR.None, T)(T row) {
+	int insert(OR or = OR.None, T)(T row) {
 		if(autoCreateTable && !hasTable(SQLName!T)) {
 			if(!create!T)
 				return 0;
 		}
-		super.insert!OPTION(row).step();
+		super.insert!or(row).step();
 		return db.changes;
 	}
-
-	unittest {
-		mixin TEST;
-		User user = { "jonas", 45 };
-		assert(db.insert(user));
-		assert(db.query("select name from User where age = 45").step());
-		assert(!db.query("select age from User where name = 'xxx'").step());
-	};
 
 	int delWhere(T, string expr, ARGS...)(ARGS args) if(expr.length) {
 		super.query(SB.del!T.where(expr), args).step();
@@ -128,6 +119,8 @@ class Database : SQLite3
 		mixin TEST;
 		User user = { "jonas", 45 };
 		assert(db.insert(user));
+		assert(db.query("select name from User where age = 45").step());
+		assert(!db.query("select age from User where name = 'xxx'").step());
 		assert(db.delWhere!(User, "age = ?")(45));
 	}
 }
