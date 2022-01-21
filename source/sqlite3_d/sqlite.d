@@ -12,7 +12,6 @@ import
 
 version (Windows) {
 	// manually link in dub.json
-	//pragma(lib, "sqlite3");
 } else version (linux) {
 	pragma(lib, "sqlite3");
 } else version (OSX) {
@@ -32,159 +31,169 @@ class SQLiteException : DBException {
 }
 
 /// Setup code for tests
-version(unittest) package template TEST(string dbname)
-{
-	SQLite3 db = () {
-		tryRemove(dbname ~ ".db");
-		return new SQLite3(dbname ~ ".db");
+version(unittest) package template TEST(string dbname = "", T = SQLite3) {
+	T db = () {
+		static if (dbname.length) {
+			tryRemove(dbname ~ ".db");
+			return new T(dbname ~ ".db");
+		} else
+			return new T(":memory:");
 	}();
 }
 
-struct Statement
-{
-	~this() { close(); }
-	sqlite3_stmt* s;
-	alias s this;
-	void close() {
-		sqlite3_finalize(s); s = null;
+package {
+	alias SQLiteException SQLEx;
+
+	void checkError(sqlite3* db, string prefix, int rc,
+		string file = __FILE__, int line = __LINE__)
+	in(db) {
+		if(rc < 0)
+			rc = sqlite3_errcode(db);
+		enforce!SQLEx(
+			rc == SQLITE_OK || rc == SQLITE_ROW || rc == SQLITE_DONE, prefix ~
+			" (" ~ rc.to!string ~ "): " ~ db.errmsg, file, line);
 	}
-	bool closed() const { return s is null; }
-	T opCast(T : bool)() const { return !closed(); }
+}
+
+template Manager(alias ptr, alias freeptr) {
+	mixin("alias ", __traits(identifier, ptr), " this;");
+	~this() { free(); }
+	void free() { freeptr(ptr); ptr = null; }
+}
+
+struct ExpandedSql {
+	char* ptr;
+	mixin Manager!(ptr, sqlite3_free);
+}
+
+alias RCExSql = RefCounted!(ExpandedSql, RefCountedAutoInitialize.no);
+
+@property {
+	auto errmsg(sqlite3* db) {
+		return sqlite3_errmsg(db).toStr;
+	}
+
+	int changes(sqlite3* db) in(db) {
+		return sqlite3_changes(db);
+	}
+	/// Return the 'rowid' produced by the last insert statement
+	long lastRowid(sqlite3* db) in(db) {
+		return sqlite3_last_insert_rowid(db);
+	}
+
+	void lastRowid(sqlite3* db, long rowid) in(db) {
+		sqlite3_set_last_insert_rowid(db, rowid);
+	}
+
+	int totalChanges(sqlite3* db) in(db) {
+		return sqlite3_total_changes(db);
+	}
+
+	string Sql(sqlite3_stmt* stmt) in(stmt) {
+		return sqlite3_sql(stmt).toStr;
+	}
+
+	RCExSql expandedSql(sqlite3_stmt* stmt) in(stmt) {
+		return RCExSql(ExpandedSql(sqlite3_expanded_sql(stmt)));
+	}
 }
 
 /// Represents a sqlite3 statement
-struct Query
+struct Statement
 {
 	int lastCode;
+	int argIndex;
+	sqlite3_stmt* stmt;
+	mixin Manager!(stmt, sqlite3_finalize);
 
 	/// Construct a query from the string 'sql' into database 'db'
 	this(ARGS...)(sqlite3* db, string sql, ARGS args)
 	in(db)
 	in(sql.length) {
 		lastCode = -1;
-		sqlite3_stmt* s;
-		int rc = sqlite3_prepare_v2(db, sql.toz, -1, &s, null);
-		checkError("Prepare failed: ", rc);
-		stmt = s;
+		int rc = sqlite3_prepare_v2(db, sql.toz, -1, &stmt, null);
+		db.checkError("Prepare failed: ", rc);
 		this.db = db;
 		set(args);
 	}
 
-	~this() { sqlite3_close(db); db = null; }
-
-	bool closed() const { return db is null; }
-	T opCast(T : bool)() const { return !closed(); }
-
-	@property int changes() in(db) { return sqlite3_changes(db); }
+	alias close = free;
 
 private:
 	sqlite3* db;
-	RefCounted!Statement stmt;
 
-	int bindArg(S)(int pos, S arg) if(isSomeString!S)
-	{
+	int bindArg(S)(int pos, S arg) if(isSomeString!S) {
 		static if(size_t.sizeof > 4)
 			return sqlite3_bind_text64(stmt, pos, arg.ptr, arg.length, null, SQLITE_UTF8);
 		else
 			return sqlite3_bind_text(stmt, pos, arg.ptr, cast(int)arg.length, null);
 	}
 
-	int bindArg(int pos, double arg)
-	{
+	int bindArg(int pos, double arg) {
 		return sqlite3_bind_double(stmt, pos, arg);
 	}
 
-	int bindArg(T)(int pos, T arg) if(isIntegral!T && T.sizeof <= 4) {
-		return sqlite3_bind_int(stmt, pos, arg);
+	int bindArg(T)(int pos, T arg) if(isIntegral!T) {
+		static if(T.sizeof > 4)
+			return sqlite3_bind_int64(stmt, pos, arg);
+		else
+			return sqlite3_bind_int(stmt, pos, arg);
 	}
 
-	int bindArg(T)(int pos, T arg) if(isIntegral!T && T.sizeof > 4) {
-		return sqlite3_bind_int64(stmt, pos, arg);
-	}
-
-	int bindArg(int pos, void[] arg)
-	{
+	int bindArg(int pos, void[] arg) {
 		static if(size_t.sizeof > 4)
 			return sqlite3_bind_blob64(stmt, pos, arg.ptr, arg.length, null);
 		else
 			return sqlite3_bind_blob(stmt, pos, arg.ptr, cast(int)arg.length, null);
 	}
 
-	int bindArg(T)(int pos, T arg) if (is(Unqual!T == typeof(null)))
-	{
+	int bindArg(T)(int pos, T arg) if (is(Unqual!T == typeof(null))) {
 		return sqlite3_bind_null(stmt, pos);
 	}
 
-	T getArg(T)(int pos)
-	{
-		import core.stdc.string;
-
+	T getArg(T)(int pos) in(stmt) {
 		int typ = sqlite3_column_type(stmt, pos);
 		static if(isIntegral!T) {
-			enforce!SQLiteException(typ == SQLITE_INTEGER,
-					"Column is not an integer");
+			enforce!SQLEx(typ == SQLITE_INTEGER, "Column is not an integer");
 			static if(T.sizeof > 4)
-				return cast(T)sqlite3_column_int64(stmt, pos);
+				return sqlite3_column_int64(stmt, pos);
 			else
 				return cast(T)sqlite3_column_int(stmt, pos);
 		} else static if(isSomeString!T) {
 			if (typ == SQLITE_NULL)
 				return T.init;
-			enforce!SQLiteException(typ == SQLITE3_TEXT,
-					"Column is not a string");
-			return cast(T)fromStringz(sqlite3_column_text(stmt, pos)).dup;
+			int size = sqlite3_column_bytes(stmt, pos);
+			return cast(T)sqlite3_column_text(stmt, pos)[0..size].dup;
 		} else static if(isFloatingPoint!T) {
-			enforce!SQLiteException(typ == SQLITE_FLOAT,
-					"Column is not a real");
+			enforce!SQLEx(typ != SQLITE_BLOB, "Column cannot convert to a real");
 			return sqlite3_column_double(stmt, pos);
 		} else {
 			if (typ == SQLITE_NULL)
 				return T.init;
-			enforce!SQLiteException(typ == SQLITE_BLOB,
-					"Column is not a blob");
+			enforce!SQLEx(typ == SQLITE3_TEXT || typ == SQLITE_BLOB,
+				"Column is not a blob or string");
 			auto ptr = sqlite3_column_blob(stmt, pos);
 			int size = sqlite3_column_bytes(stmt, pos);
 			static if(isStaticArray!T) {
 				T arr = void;
-				memcpy(arr.ptr, ptr, size);
+				arr[] = ptr[0..size];
 				return arr;
 			} else
 				return cast(T)ptr[0..size].dup;
 		}
 	}
 
-	static auto make(State state, string prefix, string suffix, T)(sqlite3* db, T s)
-	if(isAggregateType!T) {
-		mixin getSQLFields!(prefix, suffix, T);
-		// Skips "rowid" field
-		static if(I >= 0) {
-			return Query(db, SQLBuilder(sql!sqlFields, state),
-				s.tupleof[0..I], s.tupleof[I+1..$]);
-		} else {
-			return Query(db, SQLBuilder(sql!sqlFields, state), s.tupleof);
-		}
-	}
-
-	void checkError(string prefix, int rc, string file = __FILE__, int line = __LINE__)
-	{
-		if(rc < 0)
-			rc = sqlite3_errcode(db);
-		if(rc != SQLITE_OK && rc != SQLITE_ROW && rc != SQLITE_DONE)
-			throw new SQLiteException(prefix ~ " (" ~ rc.to!string ~ "): " ~
-				sqlite3_errmsg(db).toStr, file, line);
-	}
-
 public:
 	/// Bind these args in order to '?' marks in statement
-	void set(ARGS...)(ARGS args)
-	{
+	void set(ARGS...)(ARGS args) {
 		static foreach(i, a; args)
-			checkError("Bind failed: ", bindArg(i + 1, a));
+			db.checkError("Bind failed: ", bindArg(++argIndex, a));
 	}
 
+	int clear() in(stmt) { return sqlite3_clear_bindings(stmt); }
+
 	// Find column by name
-	int findColumn(string name)
-	{
+	int findColumn(string name) in(stmt) {
 		import core.stdc.string : strcmp;
 
 		auto ptr = name.toz;
@@ -197,7 +206,7 @@ public:
 	}
 
 	/// Get current row (and column) as a basic type
-	T get(T, int COL = 0)() if(!(isAggregateType!T))
+	T get(T, int COL = 0)() if(!isAggregateType!T)
 	{
 		if(lastCode == -1)
 			step();
@@ -232,62 +241,30 @@ public:
 	bool step()
 	in(stmt) {
 		lastCode = sqlite3_step(stmt);
-		checkError("Step failed", lastCode);
+		db.checkError("Step failed", lastCode);
 		return lastCode == SQLITE_ROW;
 	}
 
 	/// Reset the statement, to step through the resulting rows again.
 	void reset() in(stmt) { sqlite3_reset(stmt); }
-
-	void spin() { while (step()) {} }
-
-	static auto insert(OR OPTION = OR.None, T)(sqlite3* db, T s)
-	if(isAggregateType!T) in(db !is null) {
-		import std.array : replicate;
-
-		enum qms = ",?".replicate(ColumnCount!T);
-		return make!(State.insert, OPTION ~ "INTO " ~
-			quote(SQLName!T) ~ "(", ") VALUES(" ~
-				(qms.length ? qms[1..$] : qms) ~ ")")(db, s);
-	}
-
-	///
-	unittest {
-		User u = { name: "jonas", age: 13 };
-		Message m = { contents : "some text" };
-		assert(Query.insert(u) == "INSERT INTO 'User'('name','age') VALUES(?,?)");
-		assert(Query.insert(m) == "INSERT INTO 'msg'('contents') VALUES(?)");
-	}
-
-	///
-	auto update(OR OPTION = OR.None, T)(sqlite3* db, T s) if(isAggregateType!T) {
-		return make!(State.set, "UPDATE " ~ OPTION ~ SQLName!T ~
-			" SET ", "=?")(db, s);
-	}
-
-	///
-	unittest {
-		User user = { name: "Jonas", age: 34 };
-		assert(Query.update(user) == "UPDATE User SET 'name'=?,'age'=?");
-	}
 }
 
 ///
 unittest {
-	mixin TEST!"query";
+	mixin TEST;
 
-	auto q = Query(db, "create table TEST(a INT, b INT)");
+	auto q = db.query("create table TEST(a INT, b INT)");
 	assert(!q.step());
 
-	q = Query(db, "insert into TEST values(?, ?)");
+	q = db.query("insert into TEST values(?, ?)");
 	q.set(1, 2);
 	assert(!q.step());
-	q = Query(db, "select b from TEST where a == ?", 1);
+	q = db.query("select b from TEST where a == ?", 1);
 	assert(q.step());
 	assert(q.get!int == 2);
 	assert(!q.step());
 
-	q = Query(db, "select a,b from TEST where b == ?", 2);
+	q = db.query("select a,b from TEST where b == ?", 2);
 	// Try not stepping... assert(q.step());
 	assert(q.get!(int, int) == tuple(1, 2));
 
@@ -303,8 +280,10 @@ unittest {
 	assert(q.get!(int, int) == tuple(1, 2));
 
 	// Test exception
-	assertThrown!SQLiteException(q.get!string);
+	assertThrown!SQLEx(q.get!(byte[]));
 }
+
+alias Query = RefCounted!Statement;
 
 /// A sqlite3 database
 class SQLite3
@@ -319,10 +298,10 @@ class SQLite3
 		if (!rc)
 			sqlite3_busy_timeout(db, busyTimeout);
 		if(rc != SQLITE_OK) {
-			auto errmsg = fromStringz(sqlite3_errmsg(db)).idup;
+			auto errmsg = db.errmsg;
 			sqlite3_close(db);
 			db = null;
-			throw new SQLiteException("Could not open database:" ~ errmsg);
+			throw new SQLEx("Could not open database: " ~ errmsg);
 		}
 	}
 
@@ -331,21 +310,21 @@ class SQLite3
 	{
 		char* err_msg = void;
 		int rc = sqlite3_exec(db, sql.toz, null, null, &err_msg);
-		errmsg = fromStringz(err_msg).idup;
+		errmsg = err_msg.toStr;
 		return rc;
 	}
 
 	/// Execute an sql statement directly, binding the args to it
 	bool exec(ARGS...)(string sql, ARGS args)
 	{
-		auto q = Query(db, sql, args);
+		auto q = query(sql, args);
 		q.step();
 		return q.lastCode == SQLITE_DONE || q.lastCode == SQLITE_ROW;
 	}
 
 	///
 	unittest {
-		mixin TEST!"exec";
+		mixin TEST;
 		assert(db.exec("CREATE TABLE Test(name STRING)"));
 		assert(db.exec("INSERT INTO Test VALUES (?)", "hey"));
 	}
@@ -359,18 +338,15 @@ class SQLite3
 
 	///
 	unittest {
-		mixin TEST!"hastable";
+		mixin TEST;
 		assert(!db.hasTable("MyTable"));
 		db.exec("CREATE TABLE MyTable(id INT)");
 		assert(db.hasTable("MyTable"));
 	}
 
-	/// Return the 'rowid' produced by the last insert statement
-	@property long lastRowid() { return sqlite3_last_insert_rowid(db); }
-
 	///
 	unittest {
-		mixin TEST!"lastrowid";
+		mixin TEST;
 		assert(db.exec("CREATE TABLE MyTable(name STRING)"));
 		assert(db.exec("INSERT INTO MyTable VALUES (?)", "hey"));
 		assert(db.lastRowid == 1);
@@ -379,12 +355,44 @@ class SQLite3
 		// Only insert updates the last rowid
 		assert(db.exec("UPDATE MyTable SET name=? WHERE rowid=?", "woo", 1));
 		assert(db.lastRowid == 2);
+		db.lastRowid = 9;
+		assert(db.lastRowid == 9);
 	}
 
 	/// Create query from string and args to bind
-	Query query(ARGS...)(string sql, ARGS args)
+	auto query(ARGS...)(string sql, ARGS args)
 	{
-		return Query(db, sql, args);
+		return Query(Statement(db, sql, args));
+	}
+
+	alias prepare = query;
+
+	private auto make(State state, string prefix, string suffix, T)(T s)
+	if(isAggregateType!T) {
+		mixin getSQLFields!(prefix, suffix, T);
+		// Skips "rowid" field
+		static if(I >= 0) {
+			return Statement(db, SQLBuilder(sql!sqlFields, state),
+				s.tupleof[0..I], s.tupleof[I+1..$]);
+		} else {
+			return Statement(db, SQLBuilder(sql!sqlFields, state), s.tupleof);
+		}
+	}
+
+	auto insert(OR OPTION = OR.None, T)(T s)
+	if(isAggregateType!T) {
+		import std.array : replicate;
+
+		enum qms = ",?".replicate(ColumnCount!T);
+		return make!(State.insert, OPTION ~ "INTO " ~
+			quote(SQLName!T) ~ '(', ") VALUES(" ~
+				(qms.length ? qms[1..$] : qms) ~ ')')(s);
+	}
+
+	///
+	auto update(OR OPTION = OR.None, T)(T s) if(isAggregateType!T) {
+		return make!(State.set, "UPDATE " ~ OPTION ~ SQLName!T ~
+			" SET ", "=?")(s);
 	}
 
 	bool commit() { return exec("commit"); }
@@ -392,19 +400,20 @@ class SQLite3
 	bool rollback() { return exec("rollback"); }
 
 	unittest {
-		mixin TEST!"transaction";
+		mixin TEST;
 		db.begin();
-		assert(db.exec("CREATE TABLE MyTable(name STRING)"));
+		assert(db.exec("CREATE TABLE MyTable(name TEXT)"));
 		assert(db.exec("INSERT INTO MyTable VALUES (?)", "hey"));
 		db.rollback();
 		assert(!db.hasTable("MyTable"));
 		db.begin();
-		assert(db.exec("CREATE TABLE MyTable(name STRING)"));
+		assert(db.exec("CREATE TABLE MyTable(name TEXT)"));
 		assert(db.exec("INSERT INTO MyTable VALUES (?)", "hey"));
 		db.commit();
 		assert(db.hasTable("MyTable"));
 	}
 
 	protected sqlite3 *db;
-	alias db this;
+	mixin Manager!(db, sqlite3_close_v2);
+	alias close = free;
 }
