@@ -53,27 +53,27 @@ class Database : SQLite3
 
 	bool create(T)()
 	{
-		auto q = super.query(SB.create!T);
+		auto q = query(SB.create!T);
 		q.step();
 		return q.lastCode == SQLITE_DONE;
 	}
 
 	auto selectAllWhere(T, string expr, ARGS...)(ARGS args) if(expr.length)
 	{
-		return QueryResult!T(super.query(SB.selectAllFrom!T.where(expr), args));
+		return QueryResult!T(query(SB.selectAllFrom!T.where(expr), args));
 	}
 
 	T selectOneWhere(T, string expr, ARGS...)(ARGS args) if(expr.length)
 	{
-		auto q = super.query(SB.selectAllFrom!T.where(expr), args);
+		auto q = query(SB.selectAllFrom!T.where(expr), args);
 		if(q.step())
 			return q.get!T;
 		throw new SQLEx("No match");
 	}
 
-	T selectOneWhere(T, string expr, T defValue = T.init, ARGS...)(ARGS args)
+	T selectOneWhere(T, string expr, T defValue, ARGS...)(ARGS args)
 	if(expr.length) {
-		auto q = super.query(SB.selectAllFrom!T.where(expr), args);
+		auto q = query(SB.selectAllFrom!T.where(expr), args);
 		return q.step() ? q.get!T : defValue;
 	}
 
@@ -97,7 +97,7 @@ class Database : SQLite3
 		auto total = fold!((a,b) => User("", a.age + b.age))(users);
 
 		assert(total.age == 55 + 91 + 27);
-		assert(db.selectOneWhere!(User, "age == ?")(27).name == "maria");
+		assert(db.selectOneWhere!(User, "age = ?")(27).name == "maria");
 		assert(db.selectRow!User(2).age == 91);
 	};
 
@@ -111,7 +111,7 @@ class Database : SQLite3
 	}
 
 	int delWhere(T, string expr, ARGS...)(ARGS args) if(expr.length) {
-		super.query(SB.del!T.where(expr), args).step();
+		query(SB.del!T.where(expr), args).step();
 		return db.changes;
 	}
 

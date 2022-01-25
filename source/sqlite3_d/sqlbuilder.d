@@ -252,10 +252,10 @@ public:
 	}
 
 	///
-	static SB selectAllFrom(STRUCTS...)()
+	static SB selectAllFrom(STRUCTS...)() if (allSatisfy!(isAggregateType, STRUCTS))
 	{
 		string[] fields, tables;
-		static foreach(I, S; STRUCTS) {{
+		static foreach(S; STRUCTS) {{
 			enum tblName = SQLName!S;
 			static foreach(N; FieldNameTuple!S)
 				fields ~= tblName.quote ~ '.' ~ ColumnName!(S, N).quote;

@@ -152,6 +152,8 @@ private:
 	}
 
 	T getArg(T)(int pos) in(stmt) {
+		import core.stdc.string;
+
 		int typ = sqlite3_column_type(stmt, pos);
 		static if(isIntegral!T) {
 			enforce!SQLEx(typ == SQLITE_INTEGER, "Column is not an integer");
@@ -176,7 +178,7 @@ private:
 			int size = sqlite3_column_bytes(stmt, pos);
 			static if(isStaticArray!T) {
 				T arr = void;
-				arr[] = ptr[0..size];
+				memcpy(arr.ptr, ptr, size);
 				return arr;
 			} else
 				return cast(T)ptr[0..size].dup;
